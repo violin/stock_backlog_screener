@@ -53,6 +53,9 @@ SEC DEF 14A / 10-K ownership table
 SEC 13F
   可选慢速扫描配置中的机构管理人持仓，补充机构持股信号。
 
+USAspending.gov
+  可选免费官方联邦合同 API，用于 aerospace / defense / semiconductor materials / infrastructure / advanced manufacturing 等候选的政府订单和补贴型背书。只作为 order_quality 的加分证据，不把没有政府合同当作扣分项。
+
 yFinance
   默认关闭，只作为免费 fallback，主要补机构/内部人持股字段。
 
@@ -69,6 +72,7 @@ eligibility             市值区间是否符合中小型隐形冠军画像
 valuation               P/E 是否还没有被充分重估
 growth_quality          收入同比，以及应收/库存是否没有明显恶化
 order_quality           Backlog/RPO 文本强度、RPO 线索、金额/收入比例
+government_contract     USAspending 联邦合同奖项，作为订单可见性和战略背书补充
 ownership_alignment     内部人/管理层持股、机构持股、大股东、内部人交易、13F
 financial_quality       毛利率、经营利润率、净利率、自由现金流率、杠杆
 attention_flow          主力买卖比、近 20/60 日涨幅和资金拥挤度；独立于基本面

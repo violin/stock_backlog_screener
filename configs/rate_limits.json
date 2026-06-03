@@ -238,6 +238,32 @@
         "Optional slow path. Only run after the candidate list is already small."
       ]
     },
+    "usaspending": {
+      "source_type": "free_public_government_contract_api",
+      "interfaces": {
+        "search_spending_by_award": {
+          "used_by": [
+            "HiddenChampionPipeline._collect_usaspending"
+          ],
+          "endpoint": "POST /api/v2/search/spending_by_award/",
+          "safe_policy": {
+            "cache_hours": 24,
+            "per_symbol_delay_seconds": 1,
+            "threading": "single",
+            "max_awards_per_symbol": 12
+          },
+          "notes": [
+            "Official USAspending docs say endpoints do not currently require authorization.",
+            "Use recipient_search_text plus local recipient-name filtering to reduce false positives.",
+            "Treat as strategic order evidence; absence of federal awards should not penalize ordinary commercial companies."
+          ]
+        }
+      },
+      "observed_limit": "Not hit in current runs",
+      "notes": [
+        "Use after Futu/SEC shortlist runs, especially for aerospace, defense, semiconductor materials, infrastructure, and advanced manufacturing names."
+      ]
+    },
     "yfinance": {
       "source_type": "unofficial_cached_http_fallback",
       "interfaces": {

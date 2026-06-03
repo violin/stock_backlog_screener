@@ -112,6 +112,16 @@ class PostgresStore:
                 ),
             },
             {
+                "source_key": "usaspending",
+                "source_name": "USAspending.gov",
+                "source_type": "government_contracts",
+                "trust_level": 76,
+                "rate_limit_policy": source_policies.get(
+                    "usaspending",
+                    {"mode": "free_public_api", "threading": "single", "cache_hours": 24},
+                ),
+            },
+            {
                 "source_key": "yfinance",
                 "source_name": "Yahoo Finance via yFinance",
                 "source_type": "fallback_fundamental",

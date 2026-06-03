@@ -299,6 +299,7 @@ def create_app(*, store: PostgresStore, settings: AppSettings) -> Flask:
                     use_sec=bool(payload.get("use_sec", True)),
                     use_yfinance=bool(payload.get("use_yfinance", False)),
                     use_13f=bool(payload.get("use_13f", False)),
+                    use_usaspending=bool(payload.get("use_usaspending", False)),
                     summarize=bool(payload.get("summarize", False)),
                     delay_seconds=float(payload.get("delay_seconds", 1.0)),
                     run_context=screen_context,
@@ -569,6 +570,8 @@ def _expected_run_units(config: dict[str, Any]) -> list[str]:
         units.extend(["backlog", "backlog_quality", "growth", "quality", "ownership", "insider_activity"])
     if config.get("use_13f", False):
         units.append("institutional_activity")
+    if config.get("use_usaspending", False):
+        units.append("government_contract")
     if config.get("use_yfinance", False) and "valuation" not in units:
         units.append("valuation")
     if config.get("summarize", False):
@@ -591,6 +594,7 @@ def _dimension_monitor_label(dimension: str) -> str:
         "ownership": "Ownership",
         "insider_activity": "Insider Activity",
         "institutional_activity": "Institutions",
+        "government_contract": "Gov Contracts",
         "company_summary": "AI Summary",
         "score": "Score",
     }

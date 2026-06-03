@@ -145,6 +145,52 @@ class ProductScoringTests(unittest.TestCase):
 
         self.assertLessEqual(score.component_scores["attention_flow"], 0)
 
+    def test_government_contracts_boost_order_quality_without_missing_penalty(self):
+        base_items = [
+            {
+                "source_key": "futu_opend",
+                "importance_score": 70,
+                "evidence": {"market_cap": 1_800_000_000, "pe_ttm": 18.0},
+            },
+            {
+                "source_key": "sec_companyfacts",
+                "importance_score": 80,
+                "evidence": {
+                    "quarterly_revenue_yoy": 0.34,
+                    "gross_margin": 0.42,
+                    "operating_margin": 0.18,
+                },
+            },
+            {
+                "source_key": "sec_edgar",
+                "importance_score": 72,
+                "evidence": {"backlog_mentions": 1, "rpo_mentions": 0},
+            },
+            {
+                "source_key": "sec_proxy_ownership",
+                "importance_score": 80,
+                "evidence": {"insider_ownership": 0.07, "large_holder_max_percent": 0.12},
+            },
+        ]
+        gov_items = base_items + [
+            {
+                "source_key": "usaspending",
+                "importance_score": 84,
+                "evidence": {
+                    "government_contract_award_count": 3,
+                    "government_contract_total_value": 125_000_000,
+                    "government_contract_largest_award": 90_000_000,
+                    "government_contract_dod_value": 80_000_000,
+                },
+            }
+        ]
+
+        base_score = score_hidden_champion("TEST", base_items)
+        gov_score = score_hidden_champion("TEST", gov_items)
+
+        self.assertGreater(gov_score.component_scores["order_quality"], base_score.component_scores["order_quality"])
+        self.assertEqual(gov_score.component_scores["raw_metrics"]["government_contract_award_count"], 3)
+
 
 if __name__ == "__main__":
     unittest.main()

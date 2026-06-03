@@ -34,6 +34,7 @@ from .sec import (
     summarize_backlog_quality,
 )
 from .settings import AppSettings, PROJECT_ROOT
+from .usaspending import USASpendingClient
 from .yahoo import fetch_candidate_metrics
 
 
@@ -51,6 +52,7 @@ class HiddenChampionPipeline:
         use_sec: bool = True,
         use_yfinance: bool = False,
         use_13f: bool = False,
+        use_usaspending: bool = False,
         summarize: bool = False,
         delay_seconds: float = 1.0,
         run_context: dict | None = None,
@@ -62,6 +64,7 @@ class HiddenChampionPipeline:
             "use_sec": use_sec,
             "use_yfinance": use_yfinance,
             "use_13f": use_13f,
+            "use_usaspending": use_usaspending,
             "summarize": summarize,
             "delay_seconds": delay_seconds,
         }
@@ -82,6 +85,9 @@ class HiddenChampionPipeline:
                 self._collect_futu(run_id, clean_tickers)
 
             sec_client = SecClient(PROJECT_ROOT / ".cache" / "sec", user_agent=self.settings.sec_user_agent)
+            usaspending_client = (
+                USASpendingClient(PROJECT_ROOT / ".cache" / "usaspending") if use_usaspending else None
+            )
             llm_client = self._llm_client() if summarize else None
             for index, ticker in enumerate(clean_tickers, start=1):
                 _notify(
@@ -102,6 +108,10 @@ class HiddenChampionPipeline:
                     self._collect_sec_proxy_ownership(run_id, ticker, sec_client)
                     if use_13f:
                         self._collect_sec_13f(run_id, ticker, sec_client)
+                    time.sleep(max(0, delay_seconds))
+                if usaspending_client is not None:
+                    _notify(progress_callback, {"event": "stage", "stage": f"{ticker} USAspending contracts"})
+                    self._collect_usaspending(run_id, ticker, usaspending_client)
                     time.sleep(max(0, delay_seconds))
                 if use_yfinance:
                     _notify(progress_callback, {"event": "stage", "stage": f"{ticker} yFinance fallback"})
@@ -610,6 +620,76 @@ class HiddenChampionPipeline:
                 "institutional_13f_value_usd": analysis["total_reported_value_usd"],
                 "institutional_13f_shares": analysis["total_reported_shares"],
                 "institutional_13f_matches": analysis.get("matches", []),
+            },
+        )
+
+    def _collect_usaspending(self, run_id: int, ticker: str, client: USASpendingClient) -> None:
+        company = self.store.company(ticker) or {}
+        company_name = str(company.get("name") or ticker)
+        try:
+            signal = client.search_company_contracts(company_name=company_name, ticker=ticker, years=3, limit=12)
+            raw_json = signal.to_dict()
+            observation_type = "recipient_awards"
+            title = f"{ticker.upper()} USAspending federal contract awards"
+        except Exception as exc:
+            self.store.save_observation(
+                run_id=run_id,
+                ticker=ticker,
+                source_key="usaspending",
+                source_type="government_contracts",
+                observation_type="recipient_awards_error",
+                title=f"{ticker.upper()} USAspending contract search failed",
+                raw_json={"company_name": company_name, "error": str(exc)},
+                trust_level=35,
+            )
+            return
+        observation_id = self.store.save_observation(
+            run_id=run_id,
+            ticker=ticker,
+            source_key="usaspending",
+            source_type="government_contracts",
+            observation_type=observation_type,
+            title=title,
+            source_url="https://www.usaspending.gov/search",
+            raw_json=raw_json,
+            trust_level=76,
+        )
+        if signal.award_count <= 0:
+            return
+        top_agency = signal.top_agencies[0]["agency"] if signal.top_agencies else "federal agencies"
+        self.store.save_information_item(
+            run_id=run_id,
+            observation_id=observation_id,
+            ticker=ticker,
+            dimension="government_contract",
+            title=f"{ticker.upper()} federal contract signal",
+            summary=(
+                f"USAspending 近 3 年检出 {signal.award_count} 个疑似联邦合同奖项，"
+                f"总义务金额约 {_money(signal.total_award_amount)}，"
+                f"最大单项约 {_money(signal.largest_award_amount)}，主要来自 {top_agency}。"
+            ),
+            raw_excerpt="\n\n".join(
+                (
+                    f"{award.get('award_id')} · {award.get('recipient_name')} · "
+                    f"{_money(award.get('award_amount'))} · {award.get('awarding_agency')}"
+                )
+                for award in signal.awards[:6]
+            ),
+            source_key="usaspending",
+            source_url="https://www.usaspending.gov/search",
+            importance_score=84 if signal.total_award_amount >= 50_000_000 else 70,
+            quality_score=72,
+            confidence_score=58,
+            evidence={
+                "government_contract_award_count": signal.award_count,
+                "government_contract_total_value": signal.total_award_amount,
+                "government_contract_largest_award": signal.largest_award_amount,
+                "government_contract_dod_value": signal.dod_award_amount,
+                "government_contract_top_agencies": signal.top_agencies,
+                "government_contract_awards": signal.awards,
+                "government_contract_query": signal.query,
+                "government_contract_start_date": signal.start_date,
+                "government_contract_end_date": signal.end_date,
             },
         )
 

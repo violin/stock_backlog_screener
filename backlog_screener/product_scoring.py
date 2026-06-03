@@ -136,6 +136,9 @@ def _order_quality_score(evidence: dict[str, Any]) -> float:
     rpo_mentions = _num(evidence.get("rpo_mentions")) or 0
     largest_amount = _num(evidence.get("backlog_largest_amount") or evidence.get("largest_amount"))
     revenue = _num(evidence.get("revenue"))
+    gov_award_count = _num(evidence.get("government_contract_award_count")) or 0
+    gov_total_value = _num(evidence.get("government_contract_total_value"))
+    gov_dod_value = _num(evidence.get("government_contract_dod_value"))
     signal = backlog_mentions + rpo_mentions
     score = 0.0
     if signal >= 20:
@@ -154,6 +157,17 @@ def _order_quality_score(evidence: dict[str, Any]) -> float:
                 score += 4
             elif ratio >= 1:
                 score += 2
+    if gov_award_count >= 1:
+        score += 2
+    if gov_total_value is not None:
+        if gov_total_value >= 100_000_000:
+            score += 4
+        elif gov_total_value >= 25_000_000:
+            score += 3
+        elif gov_total_value >= 5_000_000:
+            score += 1
+    if gov_dod_value is not None and gov_dod_value >= 10_000_000:
+        score += 1
     return min(20, score)
 
 
@@ -323,6 +337,10 @@ def _raw_metrics(evidence: dict[str, Any], items: list[dict[str, Any]]) -> dict[
         "return_20d": evidence.get("return_20d"),
         "return_60d": evidence.get("return_60d"),
         "attention_flow_label": evidence.get("attention_flow_label"),
+        "government_contract_award_count": evidence.get("government_contract_award_count"),
+        "government_contract_total_value": evidence.get("government_contract_total_value"),
+        "government_contract_largest_award": evidence.get("government_contract_largest_award"),
+        "government_contract_dod_value": evidence.get("government_contract_dod_value"),
         "source_count": len({item.get("source_key") for item in items if item.get("source_key")}),
     }
 
@@ -336,6 +354,11 @@ def _explain(ticker: str, total: float, components: dict[str, Any], missing: lis
         parts.append(f"季度营收同比约 {raw['quarterly_revenue_yoy'] * 100:.1f}%。")
     if raw.get("backlog_mentions") or raw.get("rpo_mentions"):
         parts.append(f"Backlog/RPO 文本线索 {raw.get('backlog_mentions', 0) + raw.get('rpo_mentions', 0)} 处。")
+    if raw.get("government_contract_award_count"):
+        parts.append(
+            f"近年政府合同线索 {int(raw['government_contract_award_count'])} 项，"
+            f"合计约 {_money(raw.get('government_contract_total_value') or 0)}。"
+        )
     if raw.get("insider_ownership") is not None:
         parts.append(f"管理层/内部人持股约 {raw['insider_ownership'] * 100:.1f}%。")
     if raw.get("large_buy_sell_ratio") is not None and raw.get("return_20d") is not None:

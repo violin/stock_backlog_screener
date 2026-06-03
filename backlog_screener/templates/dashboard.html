@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Code-Beta</title>
-    <link rel="stylesheet" href="/static/app.css?v=20260603d" />
+    <link rel="stylesheet" href="/static/app.css?v=20260603e" />
   </head>
   <body>
     <main class="shell">
@@ -129,6 +129,7 @@
                       <option value="ownership">Ownership</option>
                       <option value="institutional_activity">Institutional Activity</option>
                       <option value="insider_activity">Insider Activity</option>
+                      <option value="government_contract">Government Contracts</option>
                       <option value="attention_flow">Attention Flow</option>
                       <option value="quality">Quality</option>
                       <option value="market">Market</option>
@@ -238,6 +239,10 @@
             <span>13F</span>
           </label>
           <label class="check">
+            <input id="useUsaspending" type="checkbox" />
+            <span>USAspending</span>
+          </label>
+          <label class="check">
             <input id="useMinimax" type="checkbox" checked />
             <span>MiniMax</span>
           </label>
@@ -291,6 +296,6 @@
         <div id="queueFailed" class="queue-list muted">None</div>
       </details>
     </aside>
-    <script src="/static/app.js?v=20260603d"></script>
+    <script src="/static/app.js?v=20260603e"></script>
   </body>
 </html>

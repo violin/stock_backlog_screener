@@ -63,6 +63,7 @@ def main(argv=None) -> int:
             use_sec=not args.no_sec,
             use_yfinance=args.yfinance,
             use_13f=args.sec_13f,
+            use_usaspending=args.usaspending,
             summarize=args.summarize,
             delay_seconds=args.delay,
         )
@@ -174,6 +175,7 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--no-sec", action="store_true", help="Skip SEC filing and companyfacts collection.")
     ingest.add_argument("--yfinance", action="store_true", help="Use yFinance only as slow fallback for ownership fields.")
     ingest.add_argument("--sec-13f", action="store_true", help="Enable slow curated SEC 13F institutional holder scan.")
+    ingest.add_argument("--usaspending", action="store_true", help="Enable USAspending federal contract award search.")
     ingest.add_argument("--summarize", action="store_true", help="Use MiniMax when MINIMAX_API_KEY is configured.")
     ingest.add_argument("--delay", type=float, default=1.0, help="Seconds to sleep between low-frequency source calls.")
 
