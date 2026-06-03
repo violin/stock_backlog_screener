@@ -1,0 +1,8 @@
+yfinance>=0.2.66,<1.0
+pandas>=2.2.0,<3.0
+requests>=2.32.0,<3.0
+urllib3<2.0
+psycopg[binary]>=3.2.0,<4.0
+Flask>=3.0.0,<4.0
+python-dotenv>=1.0.1,<2.0
+futu-api>=9.4.0

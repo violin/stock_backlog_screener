@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Code-Beta</title>
+    <link rel="stylesheet" href="/static/app.css?v=20260603d" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand-lockup" aria-label="Code-Beta">
+          <span class="brand-mark" aria-hidden="true">
+            <svg class="brand-logo" viewBox="0 0 64 64" role="img">
+              <defs>
+                <linearGradient id="logoBadgeGradient" x1="10" y1="8" x2="54" y2="56" gradientUnits="userSpaceOnUse">
+                  <stop offset="0" stop-color="#152334" />
+                  <stop offset="1" stop-color="#071018" />
+                </linearGradient>
+                <linearGradient id="logoStepGradient" x1="15" y1="44" x2="48" y2="17" gradientUnits="userSpaceOnUse">
+                  <stop offset="0" stop-color="#4fd1c5" />
+                  <stop offset="0.55" stop-color="#7db8ff" />
+                  <stop offset="1" stop-color="#f5bd4f" />
+                </linearGradient>
+              </defs>
+              <rect class="logo-badge" x="9" y="9" width="46" height="46" rx="12" />
+              <path class="logo-scan" d="M16 18h20M16 47h32" />
+              <path class="logo-steps" d="M17 43V33h8v10M28 43V27h8v16M39 43V20h8v23" />
+              <path class="logo-rise" d="M16 43h9l7-9 8 4 9-16" />
+              <path class="logo-star" d="M47 13l2 4 4 2-4 2-2 4-2-4-4-2 4-2z" />
+              <circle class="logo-anchor" cx="16" cy="43" r="2.5" />
+            </svg>
+          </span>
+          <div class="brand-copy">
+            <p class="eyebrow">Code-Beta</p>
+            <h1>Hidden Champion Research Desk</h1>
+          </div>
+        </div>
+        <nav class="workspace-menu" aria-label="Workspace menu">
+          <button id="openScreeningButton" class="nav-link active" type="button">Screening</button>
+          <button id="navPoolsButton" class="nav-link" type="button">Candidates</button>
+          <button id="navDetailsButton" class="nav-link" type="button">Details</button>
+          <button id="openRunsButton" class="nav-link" type="button">Runs</button>
+        </nav>
+        <div class="topbar-actions">
+          <label class="global-search">
+            <span>Search</span>
+            <input id="globalSearch" type="search" placeholder="Search ticker or company" autocomplete="off" />
+          </label>
+          <button id="refreshButton" class="utility-button" type="button">Refresh</button>
+          <div class="status-strip">
+            <button id="workerState" class="status-button" type="button">IDLE</button>
+            <button id="latestRun" class="status-button" type="button">RUN -</button>
+          </div>
+        </div>
+      </header>
+
+      <section class="grid">
+        <aside class="panel candidates">
+          <div class="panel-head stacked-head">
+            <div class="panel-title-row">
+              <h2 id="candidatePanelTitle">Candidate Pools</h2>
+              <span id="candidateCount">0</span>
+            </div>
+            <div id="candidatePoolList" class="candidate-pool-list" aria-label="Candidate pools"></div>
+            <div class="panel-search-row">
+              <label class="mini-field candidate-search-field" title="Searches all latest scored candidates by ticker or company name.">
+                <span>Ticker Search</span>
+                <input id="candidateSearch" type="search" placeholder="POET / AEVA / company" autocomplete="off" />
+              </label>
+            </div>
+            <div class="panel-filter-row">
+              <label class="mini-field sector-filter-field" title="Filter candidates by sector or industry group.">
+                <span>Sector</span>
+                <select id="sectorFilter">
+                  <option value="">All Sectors</option>
+                </select>
+              </label>
+              <label class="mini-field score-filter-field" title="Only filters the ranked candidate list. It is not used by Run.">
+                <span>Score</span>
+                <input id="minScore" type="number" min="0" max="100" value="0" />
+              </label>
+              <label class="mini-field per-sector-field" title="Only controls how many candidates are shown per sector. It is not used by Run.">
+                <span>Top / Sector</span>
+                <select id="perSector">
+                  <option value="5" selected>5</option>
+                  <option value="6">6</option>
+                  <option value="7">7</option>
+                  <option value="8">8</option>
+                  <option value="9">9</option>
+                  <option value="10">10</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <div id="candidateList" class="candidate-list"></div>
+        </aside>
+
+        <section class="panel detail">
+          <div class="panel-head detail-head">
+            <div class="detail-head-layout">
+              <div class="detail-main-stack">
+                <div class="detail-title-row">
+                  <div class="detail-identity">
+                    <h2>Details</h2>
+                    <div class="detail-symbol-row">
+                      <strong id="detailTitle">Ticker</strong>
+                      <span id="detailScore">-</span>
+                      <span id="detailLastRun">Last trigger -</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="detail-controls">
+                  <div class="detail-tabs" role="tablist" aria-label="Ticker research tabs">
+                    <button id="summaryTab" class="detail-tab active" type="button">AI Summary</button>
+                    <button id="truthTab" class="detail-tab" type="button">Truth</button>
+                    <button id="timetableTab" class="detail-tab" type="button">Timetable</button>
+                  </div>
+                  <label class="mini-field dimension-filter">
+                    <span>Truth Filter</span>
+                    <select id="dimensionFilter">
+                      <option value="">All</option>
+                      <option value="company_summary">Company Summary</option>
+                      <option value="sector">Sector</option>
+                      <option value="valuation">Valuation</option>
+                      <option value="growth">Growth</option>
+                      <option value="backlog">Backlog/RPO</option>
+                      <option value="backlog_quality">Backlog Quality</option>
+                      <option value="ownership">Ownership</option>
+                      <option value="institutional_activity">Institutional Activity</option>
+                      <option value="insider_activity">Insider Activity</option>
+                      <option value="attention_flow">Attention Flow</option>
+                      <option value="quality">Quality</option>
+                      <option value="market">Market</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+              <div class="detail-side-cluster">
+                <aside id="trendMiniChart" class="trend-mini-chart">
+                  <div class="trend-mini-head">
+                    <div>
+                      <span>Lifetime Trend</span>
+                      <small>Total return</small>
+                    </div>
+                    <strong id="trendReturn">-</strong>
+                  </div>
+                  <div id="trendChartBody" class="trend-chart-body">
+                    <div class="trend-empty">Loading trend</div>
+                  </div>
+                  <div class="trend-mini-foot">
+                    <span id="trendRange">Futu weekly close</span>
+                    <span id="trendPrice">-</span>
+                  </div>
+                </aside>
+                <div class="detail-actions">
+                  <button id="rerunTickerButton" class="ghost-button rerun-button" type="button">Update</button>
+                  <button id="detailWatchButton" class="watch-button" type="button">Watch</button>
+                  <button id="summaryButton" class="summary-action-button" type="button">AI Rewrite</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <section id="summaryPanel" class="detail-panel summary-window active">
+            <div class="summary-head">
+              <div>
+                <h3>AI Summary</h3>
+                <p id="summaryMeta">MiniMax prompt summary</p>
+              </div>
+            </div>
+            <div id="summaryBody" class="summary-body">
+              <div class="empty">No summary yet</div>
+            </div>
+          </section>
+          <div id="truthPanel" class="detail-panel">
+            <div id="missingData" class="missing-strip"></div>
+            <div id="scoreBreakdown" class="score-grid"></div>
+            <div id="timeline" class="timeline"></div>
+          </div>
+          <div id="timetablePanel" class="detail-panel">
+            <div id="futureTimeline" class="future-timeline"></div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="screeningDialog" class="screening-dialog">
+      <div class="screening-dialog-head">
+        <div>
+          <p class="eyebrow">Screening</p>
+          <h2>Screening</h2>
+        </div>
+        <button id="closeScreeningDialog" class="ghost-button" type="button">Close</button>
+      </div>
+      <div class="screening-grid">
+        <label class="field">
+          <span>Mode</span>
+          <select id="screenMode">
+            <option value="tickers">Ticker List</option>
+            <option value="condition">Condition Screen</option>
+          </select>
+        </label>
+        <label class="field ticker-field">
+          <span>Tickers</span>
+          <input id="tickerInput" placeholder="STRL PLPC POWL" />
+        </label>
+        <label class="field condition-field">
+          <span>Condition</span>
+          <input id="screenCondition" placeholder="US 500M-10B hidden champion" />
+        </label>
+      </div>
+      <div class="screening-section">
+        <h3>Screen Sources</h3>
+        <div class="check-grid">
+          <label class="check">
+            <input id="useFutuScreen" type="checkbox" checked />
+            <span>Futu OpenD</span>
+          </label>
+          <label class="check">
+            <input id="useTradingView" type="checkbox" />
+            <span>TradingView</span>
+          </label>
+        </div>
+      </div>
+      <div class="screening-section">
+        <h3>Evidence Sources</h3>
+        <div class="check-grid">
+          <label class="check">
+            <input id="useSec" type="checkbox" checked />
+            <span>SEC / EDGAR</span>
+          </label>
+          <label class="check">
+            <input id="useYfinance" type="checkbox" checked />
+            <span>yFinance</span>
+          </label>
+          <label class="check">
+            <input id="use13f" type="checkbox" checked />
+            <span>13F</span>
+          </label>
+          <label class="check">
+            <input id="useMinimax" type="checkbox" checked />
+            <span>MiniMax</span>
+          </label>
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <button id="runButton" type="button">Run</button>
+      </div>
+    </dialog>
+
+    <aside id="queueDrawer" class="queue-drawer" aria-hidden="true">
+      <div class="queue-drawer-head">
+        <div>
+          <h2>Run Queue</h2>
+          <p id="queueProgress">No active run</p>
+        </div>
+        <button id="queueClose" type="button">Close</button>
+      </div>
+      <div class="queue-status-row">
+        <span id="queueStage">Idle</span>
+      </div>
+      <section class="run-monitor">
+        <div class="monitor-title-row">
+          <h3>Run Monitor</h3>
+          <span id="monitorSummary">No database runs</span>
+        </div>
+        <div id="activeRunList" class="monitor-list"></div>
+        <details class="queue-section recent-run-section" open>
+          <summary>Recent Runs <span id="recentRunCount">0</span></summary>
+          <div id="recentRunList" class="recent-run-list muted">None</div>
+        </details>
+      </section>
+      <div class="monitor-title-row web-queue-title">
+        <h3>Web Queue</h3>
+        <span>Browser-triggered only</span>
+      </div>
+      <details class="queue-section" open>
+        <summary>Current <span id="queueCurrentCount">0</span></summary>
+        <div id="queueCurrent" class="queue-list muted">None</div>
+      </details>
+      <details class="queue-section" open>
+        <summary>Pending <span id="queuePendingCount">0</span></summary>
+        <div id="queuePending" class="queue-list muted">None</div>
+      </details>
+      <details class="queue-section">
+        <summary>Completed <span id="queueCompletedCount">0</span></summary>
+        <div id="queueCompleted" class="queue-list muted">None</div>
+      </details>
+      <details class="queue-section">
+        <summary>Failed <span id="queueFailedCount">0</span></summary>
+        <div id="queueFailed" class="queue-list muted">None</div>
+      </details>
+    </aside>
+    <script src="/static/app.js?v=20260603d"></script>
+  </body>
+</html>

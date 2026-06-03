@@ -1,0 +1,15 @@
+ticker,theme,note
+PLPC,power_grid,Power and communications infrastructure supplier seed from the original thesis.
+STRL,data_center_infrastructure,Sterling infrastructure seed from the original thesis.
+POWL,power_equipment,Known reference case for power infrastructure backlog expansion.
+VRT,data_center_power,Data center thermal and power infrastructure.
+MOD,data_center_thermal,Thermal management exposure.
+ETN,power_equipment,Electrical equipment benchmark, likely above target market cap.
+IESC,electrical_contracting,Electrical and infrastructure services.
+FIX,building_systems,Construction and building systems backlog candidate.
+MTZ,infrastructure_services,Utility and communications infrastructure contractor.
+GVA,infrastructure_construction,Infrastructure construction and materials candidate.
+ACM,engineering_construction,Engineering and construction benchmark, likely above target market cap.
+TPC,civil_infrastructure,Civil infrastructure backlog candidate.
+DY,telecom_infrastructure,Telecom and fiber infrastructure contractor.
+APG,fire_safety_systems,Specialty contractor with project backlog profile.

@@ -1,0 +1,57 @@
+ticker,name,sector_group,sector_rank,futu_score,grade
+QNST,QuinStreet,Advertising Agencies,1,53.12,C
+VRTS,Virtus Investment,Asset Management,1,34.04,D
+NCDL,Nuveen Churchill Direct Lending Corp,Asset Management,2,19.04,D
+VINP,Vinci Compass Investments,Asset Management,3,11.64,D
+ACNB,ACNB Corp.,Banks - Regional,1,54.12,C
+ESQ,Esquire Financial,Banks - Regional,2,27.28,D
+BSRR,Sierra Bancorp,Banks - Regional,3,24.04,D
+THFF,First Financial,Banks - Regional,4,20.84,D
+NBBK,NB Bancorp,Banks - Regional,5,13.84,D
+ABUS,Arbutus Biopharma,Biotechnology,1,60.12,C
+CRMD,CorMedix,Biotechnology,2,58.12,C
+XOMA,XOMA Corp,Biotechnology,3,36.04,D
+EIKN,Eikon Therapeutics,Biotechnology,4,14.56,D
+TECX,Tectonic Therapeutic,Biotechnology,5,10.84,D
+APOG,Apogee Enterprises,Building Products & Equipment,1,64.8,C
+LMB,Limbach,Building Products & Equipment,2,63.0,C
+CRCT,Cricut,Computer Hardware,1,58.04,C
+JCAP,Jefferson Capital Inc,Credit Services,1,49.12,C
+PRAA,PRA Group,Credit Services,2,41.32,D
+AMPH,Amphastar Pharmaceuticals,Drug Manufacturers - Specialty & Generic,1,53.04,C
+APEI,American Public Education,Education & Training Services,1,36.04,D
+BWMN,Bowman Consulting,Engineering & Construction,1,2.08,D
+TREE,LendingTree,Financial Conglomerates,1,52.12,C
+ETD,Ethan Allen Interiors,"Furnishings, Fixtures & Appliances",1,69.48,B
+AMWD,American Woodmark,"Furnishings, Fixtures & Appliances",2,33.04,D
+ACEL,Accel Entertainment,Gambling,1,12.84,D
+THM,International Tower Hill Mines,Gold,1,14.84,D
+GAU,Galiano Gold,Gold,2,10.44,D
+NGVC,Natural Grocers by Vitamin Cottage,Grocery Stores,1,40.04,D
+ODD,ODDITY Tech,Household & Personal Products,1,11.64,D
+TITN,Titan Machinery,Industrial Distribution,1,51.48,C
+BOW,Bowhead Specialty,Insurance - Property & Casualty,1,48.32,C
+TIPT,Tiptree-A,Insurance - Specialty,1,28.24,D
+MOV,Movado,Luxury Goods,1,50.48,C
+HSHP,Himalaya Shipping,Marine Shipping,1,16.64,D
+SB,Safe Bulkers,Marine Shipping,2,7.44,D
+TCMD,Tactile Systems Technology,Medical Devices,1,37.04,D
+SD,SandRidge Energy,Oil & Gas E&P,1,54.32,C
+REPX,Riley Exploration Permian,Oil & Gas E&P,2,38.04,D
+FTK,Flotek Industries,Oil & Gas Equipment & Services,1,61.32,C
+APC,ARKO Petroleum,Oil & Gas Refining & Marketing,1,9.6,D
+BRBR,BellRing Brands,Packaged Foods,1,39.24,D
+MYE,Myers Industries,Packaging & Containers,1,35.24,D
+SCHL,Scholastic Corp,Publishing,1,42.48,D
+ADAM,Adamas Trust Inc,REIT - Mortgage,1,12.84,D
+HOV,Hovnanian Enterprises,Residential Construction,1,45.8,C
+MLAB,Mesa Laboratories,Scientific & Technical Instruments,1,65.04,B
+GTM,ZoomInfo,Software - Application,1,69.68,B
+OSPN,OneSpan,Software - Infrastructure,1,67.04,B
+RHLD,Resolute Holdings Management,Specialty Business Services,1,42.92,D
+MATV,Mativ,Specialty Chemicals,1,38.04,D
+JBSS,John B. Sanfilippo & Son,Unclassified,1,66.24,B
+BHB,Bar Harbor Bankshares,Unclassified,2,45.04,C
+ACIC,American Coastal Insurance,Unclassified,3,39.04,D
+HBCP,Home Bancorp,Unclassified,4,32.28,D
+FSBC,Five Star Bancorp,Unclassified,5,22.84,D

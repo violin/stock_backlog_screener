@@ -1,0 +1,341 @@
+{
+  "version": 1,
+  "updated_at": "2026-05-28",
+  "timezone": "Asia/Shanghai",
+  "purpose": "Interface-level rate-limit and backoff notes for the hidden champion screener. Keep this file close to live observations so future batch runs do not rediscover the same limits.",
+  "defaults": {
+    "threading": "single",
+    "large_universe_batch_size": 100,
+    "retry_jitter_seconds": 0,
+    "notes": [
+      "This screener is low-frequency. Prefer waiting over parallelizing.",
+      "For whole-universe jobs, run market/valuation first, then slower text/LLM sources only on shortlisted candidates.",
+      "Observed limits are from local runs and may vary by OpenD version, account permission, market, or vendor policy."
+    ]
+  },
+  "sources": {
+    "futu_opend": {
+      "source_type": "local_gateway_market_data",
+      "host_env": "FUTU_HOST",
+      "port_env": "FUTU_PORT",
+      "interfaces": {
+        "get_stock_filter": {
+          "used_by": [
+            "python -m backlog_screener.cli seed-futu"
+          ],
+          "observed_limit": "Maximum 10 times per 30 seconds",
+          "observed_error_patterns": [
+            "high frequency",
+            "maximum 10 times per 30 seconds"
+          ],
+          "safe_policy": {
+            "page_size": 200,
+            "page_delay_seconds": 3.2,
+            "rate_limit_wait_seconds": 30,
+            "threading": "single"
+          },
+          "last_validated": "2026-05-28",
+          "notes": [
+            "Used for market-cap seeding.",
+            "For 500M-1B US market cap, returned 584 raw matches and 502 common-stock tickers after local filtering."
+          ]
+        },
+        "get_market_snapshot": {
+          "used_by": [
+            "HiddenChampionPipeline._collect_futu",
+            "metrics_from_futu_snapshot",
+            "information_from_futu_snapshot"
+          ],
+          "observed_limit": "Not hit in current runs",
+          "safe_policy": {
+            "batch_size": 100,
+            "batch_delay_seconds": 0,
+            "threading": "single"
+          },
+          "last_validated": "2026-05-28",
+          "notes": [
+            "Used for price, market cap, P/E, P/B, volume, turnover, and 52-week range.",
+            "502-symbol 500M-1B run completed in 100-symbol batches without hitting this interface limit."
+          ]
+        },
+        "get_owner_plate": {
+          "used_by": [
+            "FutuProvider.owner_plates",
+            "classification_from_futu_plates"
+          ],
+          "observed_limit": "Not hit in current runs",
+          "observed_error_patterns": [
+            "Get Stock's Sector interface does not support ETFs type."
+          ],
+          "safe_policy": {
+            "batch_size": 100,
+            "batch_delay_seconds": 0.35,
+            "on_batch_error": "fallback_to_one_by_one_and_skip_unsupported_symbols",
+            "threading": "single"
+          },
+          "last_validated": "2026-05-28",
+          "notes": [
+            "Some symbols returned by stock_filter still cause sector API errors. Do not fail the whole batch.",
+            "If unsupported, keep company sector as Unclassified and continue."
+          ]
+        },
+        "get_capital_distribution": {
+          "used_by": [
+            "FutuProvider.attention_flow",
+            "attention_metrics"
+          ],
+          "observed_limit": "Not separately hit in current runs",
+          "safe_policy": {
+            "per_symbol_delay_seconds": 1.05,
+            "threading": "single"
+          },
+          "last_validated": "2026-05-28",
+          "notes": [
+            "Used for current super/big/mid/small buy and sell amounts.",
+            "Some responses may have empty update_time; treat empty date strings as null before PostgreSQL writes."
+          ]
+        },
+        "get_capital_flow": {
+          "used_by": [
+            "FutuProvider.capital_flow",
+            "FutuProvider.attention_flow",
+            "attention_metrics"
+          ],
+          "observed_limit": "Maximum 30 times per 30 seconds",
+          "observed_error_patterns": [
+            "Get Capital Flow request failed due to high frequency. Maximum 30 times per 30 seconds."
+          ],
+          "safe_policy": {
+            "period_type": "DAY",
+            "days": 20,
+            "per_symbol_delay_seconds": 1.05,
+            "rate_limit_wait_seconds": 31,
+            "max_retries": 1,
+            "threading": "single"
+          },
+          "last_validated": "2026-05-28",
+          "notes": [
+            "Initial 500M-1B Futu-only run called this too quickly: 150/502 symbols got attention_flow and 352 symbols hit the 30-per-30s limit.",
+            "Do not parallelize this interface.",
+            "For large universes, keep 100-symbol batches but allow the per-symbol attention loop to sleep about 1.05 seconds."
+          ]
+        },
+        "request_history_kline": {
+          "used_by": [
+            "FutuProvider.history_kline",
+            "FutuProvider.attention_flow",
+            "attention_metrics"
+          ],
+          "observed_limit": "Historical candlestick quota can be exhausted; quota is released on a rolling basis and may take up to 30 days to fully release.",
+          "observed_error_patterns": [
+            "Insufficient historical candlestick quota",
+            "Quota is released on a rolling basis"
+          ],
+          "safe_policy": {
+            "kline_type": "K_DAY",
+            "adjustment": "QFQ",
+            "history_days": 80,
+            "max_count": 1000,
+            "per_symbol_delay_seconds": 1.05,
+            "on_quota_error": "continue_attention_flow_without_recent_return_metrics",
+            "threading": "single"
+          },
+          "last_validated": "2026-05-28",
+          "notes": [
+            "Used for 5/20/60-day returns and 60-day price range position.",
+            "Rate-limit pacing is shared with the attention_flow composite rather than separately enforced.",
+            "If this quota is exhausted, still save capital_distribution and capital_flow; mark recent return metrics as missing instead of failing the whole attention_flow item."
+          ]
+        },
+        "attention_flow_composite": {
+          "used_by": [
+            "FutuProvider.attention_flow"
+          ],
+          "calls": [
+            "get_capital_distribution",
+            "get_capital_flow",
+            "request_history_kline"
+          ],
+          "safe_policy": {
+            "per_symbol_delay_seconds": 1.05,
+            "batch_size": 100,
+            "threading": "single",
+            "on_rate_limit": "wait_31_seconds_then_retry_once",
+            "on_kline_quota_error": "save_main_money_metrics_without_recent_return_metrics",
+            "on_symbol_error": "save_attention_flow_error_and_continue"
+          },
+          "last_validated": "2026-05-28",
+          "notes": [
+            "This composite is the bottleneck for large Futu-only scans.",
+            "It should be optional or staged after market-cap/valuation seeding.",
+            "In the 500M-1B補跑, runs 31-32 hit historical candlestick quota, not capital-flow frequency; this should degrade to missing recent-return metrics."
+          ]
+        }
+      }
+    },
+    "sec_edgar": {
+      "source_type": "polite_http_filing",
+      "interfaces": {
+        "company_tickers": {
+          "safe_policy": {
+            "cache_hours": 24,
+            "delay_seconds": 0.2,
+            "threading": "single"
+          }
+        },
+        "submissions": {
+          "safe_policy": {
+            "cache_hours": 12,
+            "delay_seconds": 0.2,
+            "threading": "single"
+          }
+        },
+        "filing_text": {
+          "safe_policy": {
+            "cache_hours": 12,
+            "delay_seconds": 0.2,
+            "retries": 2,
+            "retry_wait_seconds": 2,
+            "threading": "single"
+          },
+          "observed_error_patterns": [
+            "SSLEOFError",
+            "Max retries exceeded with url"
+          ],
+          "notes": [
+            "SEC archive document downloads can occasionally EOF mid TLS handshake. Retry before failing the run."
+          ]
+        },
+        "companyfacts": {
+          "safe_policy": {
+            "cache_hours": 12,
+            "delay_seconds": 0.2,
+            "threading": "single"
+          }
+        }
+      },
+      "observed_limit": "Not hit in current runs",
+      "notes": [
+        "Keep SEC work downstream of Futu shortlists.",
+        "Use SEC_USER_AGENT.",
+        "Current pipeline relies on cache and per-ticker delay; do not run broad SEC scans over hundreds of names unless intentionally scheduled."
+      ]
+    },
+    "sec_13f": {
+      "source_type": "slow_optional_sec_filing",
+      "interfaces": {
+        "curated_manager_13f": {
+          "safe_policy": {
+            "cache_hours": 24,
+            "delay_seconds": 0.2,
+            "threading": "single",
+            "manager_config": "configs/13f_managers.csv"
+          }
+        }
+      },
+      "observed_limit": "Not hit in current runs",
+      "notes": [
+        "Optional slow path. Only run after the candidate list is already small."
+      ]
+    },
+    "yfinance": {
+      "source_type": "unofficial_cached_http_fallback",
+      "interfaces": {
+        "ticker_info": {
+          "safe_policy": {
+            "cache_hours": 24,
+            "delay_seconds_default": 1.5,
+            "delay_seconds_large_run": 5,
+            "retries": 1,
+            "retry_wait_seconds_default": 30,
+            "retry_wait_seconds_large_run": 60,
+            "threading": "single"
+          },
+          "observed_error_patterns": [
+            "429",
+            "Too Many Requests",
+            "rate limit"
+          ]
+        },
+        "yahoo_screener_seed": {
+          "safe_policy": {
+            "limit_max": 250,
+            "cache_hours": 24,
+            "threading": "single"
+          }
+        }
+      },
+      "observed_limit": "Provider-dependent; avoid broad live fetches",
+      "notes": [
+        "Keep default off. Prefer Futu OpenD for market/valuation fields.",
+        "Use yFinance only as a slow fallback for ownership/fundamental fields that are not available from Futu or SEC."
+      ]
+    },
+    "minimax": {
+      "source_type": "optional_llm_summary",
+      "interfaces": {
+        "anthropic_messages": {
+          "base_url_env": "MINIMAX_BASE_URL",
+          "api_key_env": "MINIMAX_API_KEY",
+          "model_env": "MINIMAX_MODEL",
+          "safe_policy": {
+            "threading": "single",
+            "retries": 1,
+            "retry_wait_seconds": 30,
+            "respect_retry_after_header": true,
+            "only_call_when_explicitly_enabled": true
+          },
+          "observed_error_patterns": [
+            "HTTP 429",
+            "insufficient",
+            "rate limit"
+          ]
+        }
+      },
+      "last_validated": "2026-05-26",
+      "notes": [
+        "Default off. Used for SEC snippet summaries and company summary panel.",
+        "If 429 occurs, do not fail the whole run; fall back to heuristic summary where possible."
+      ]
+    },
+    "postgresql": {
+      "source_type": "local_storage",
+      "interfaces": {
+        "local_postgres": {
+          "safe_policy": {
+            "dsn_default": "postgresql://joeyang@localhost:5432/hidden_champion_screener",
+            "dsn_socket_alternative": "postgresql://joeyang@/hidden_champion_screener?host=/tmp",
+            "password": "none"
+          }
+        }
+      },
+      "notes": [
+        "No external rate limit. Keep writes single-threaded for pipeline simplicity.",
+        "Do not write empty strings into timestamptz fields; normalize empty dates to null."
+      ]
+    }
+  },
+  "known_run_notes": [
+    {
+      "date": "2026-05-28",
+      "run_ids": [
+        22,
+        23,
+        24,
+        25,
+        26,
+        27
+      ],
+      "scope": "Futu-only 500M-1B US market-cap scan",
+      "result": "502 symbols completed for snapshot/valuation/sector. attention_flow completed for 150 symbols before get_capital_flow rate-limit errors dominated.",
+      "lesson": "Use get_capital_flow <= 30 calls per 30 seconds; single-thread and per-symbol delay around 1.05 seconds."
+    },
+    {
+      "date": "2026-05-28",
+      "run_id": 21,
+      "scope": "First Futu-only 500M-1B batch attempt",
+      "result": "Failed on owner_plate batch due to unsupported ETF-like symbol.",
+      "lesson": "owner_plate batch errors must fall back to one-by-one and skip unsupported symbols."
+    }
+  ]
+}
