@@ -163,7 +163,7 @@ http://127.0.0.1:5055
 ```text
 按板块分组列出候选标的
 每个板块保留 5-10 个最高分标的，避免单一热门板块挤占 Top 100
-Datasource 页面展示 source_key、来源、网站、适用范围、限流、缓存策略、中英双语用途和 RDW 优先级
+Datasource 页面展示 source_key、来源、网站、适用范围、限流、缓存策略和通用用途说明
 AI Summary 窗口：用 MiniMax prompt 总结公司业务、行业角色、推荐理由、风险和跟踪点，并缓存到信息层
 查看每个标的的时间线
 按信息维度筛选：company_summary / sector / valuation / growth / backlog / backlog_quality / ownership / institutional_activity / insider_activity / government_contract / quality / market
@@ -179,17 +179,6 @@ base       Futu / SEC 等基础源，默认覆盖所有 ticker
 optional   yFinance / 13F / MiniMax 等慢速或补充源，手动打开；FMP / Fintel / Ortex / Finnhub / SEC-API.io 作为 planned 候选源登记
 sector     USAspending / Launch Library / FCC / 行业会议 agenda 等特定板块源，只对匹配行业或 ticker 跑
 ticker     公司官网 / IR / 官方新闻源，只在该 ticker 配置了官方来源后跑
-```
-
-以 RDW 这类太空基础设施股为目标时，数据源接入顺序：
-
-```text
-P1  已有基础层：Futu OpenD、SEC EDGAR、SEC companyfacts、USAspending。
-P1  下一步优先接入：company_official，公司官网/IR/新闻，用来捕捉合同、任务进展、backlog 口径变化。
-P2  Launch Library 2：当 Redwire 硬件、载荷或客户任务出现在发射清单中时，形成未来催化剂。
-P3  FMP / SEC-API.io / Fintel：补财报日历、估值分位、SEC 检索增强和空头/借券择时。
-P4  FCC / Finnhub / OpenInsider / Ortex / industry agenda / yFinance：按具体场景补充，不作为 RDW 第一批接入。
-P5  MiniMax：等证据采完后做解释和摘要，不作为事实源。
 ```
 
 当前简明框架和阶段 checklist：

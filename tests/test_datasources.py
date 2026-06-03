@@ -61,17 +61,13 @@ class DatasourceRegistryTests(unittest.TestCase):
         self.assertIn("purpose_zh", metadata)
         self.assertIn("政府", metadata["purpose_zh"])
 
-    def test_rdw_priority_highlights_contract_and_official_sources(self):
-        priorities = {
-            key: source_payload(source_definition(key))["metadata"]["rdw_priority"]
-            for key in ("company_official", "sec_edgar", "sec_companyfacts", "usaspending", "launch_library")
-        }
+    def test_datasource_payload_keeps_ticker_analysis_priority_out_of_generic_registry(self):
+        metadata = source_payload(source_definition("company_official"))["metadata"]
 
-        self.assertEqual(priorities["company_official"], 1)
-        self.assertEqual(priorities["sec_edgar"], 1)
-        self.assertEqual(priorities["sec_companyfacts"], 1)
-        self.assertEqual(priorities["usaspending"], 1)
-        self.assertEqual(priorities["launch_library"], 2)
+        self.assertNotIn("rdw_priority", metadata)
+        self.assertNotIn("rdw_priority_reason_en", metadata)
+        self.assertNotIn("rdw_priority_reason_zh", metadata)
+        self.assertNotIn("source_name_zh", metadata)
 
 
 if __name__ == "__main__":

@@ -727,14 +727,11 @@ def _datasource_payload(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "source_key": row.get("source_key"),
         "source_name": row.get("source_name"),
-        "source_name_zh": metadata.get("source_name_zh") or "",
         "source_type": row.get("source_type"),
-        "source_type_zh": metadata.get("source_type_zh") or "",
         "trust_level": row.get("trust_level"),
         "enabled": row.get("enabled"),
         "updated_at": row.get("updated_at"),
         "provider": metadata.get("provider") or "",
-        "provider_zh": metadata.get("provider_zh") or "",
         "website_url": metadata.get("website_url") or "",
         "docs_url": metadata.get("docs_url") or "",
         "collection_scope": metadata.get("collection_scope") or "optional",
@@ -755,10 +752,6 @@ def _datasource_payload(row: dict[str, Any]) -> dict[str, Any]:
         "cache_policy": metadata.get("cache_policy") or "",
         "cache_policy_zh": metadata.get("cache_policy_zh") or "",
         "notes": metadata.get("notes") or [],
-        "notes_zh": metadata.get("notes_zh") or [],
-        "rdw_priority": metadata.get("rdw_priority"),
-        "rdw_priority_reason_en": metadata.get("rdw_priority_reason_en") or "",
-        "rdw_priority_reason_zh": metadata.get("rdw_priority_reason_zh") or "",
         "rate_limit_policy": rate_limit_policy,
     }
 
