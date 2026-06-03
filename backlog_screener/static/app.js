@@ -5,6 +5,8 @@ let activePool = "all";
 let candidateSearchTimer = null;
 let candidateRefreshRequest = 0;
 let sectorsLoaded = false;
+let datasourcesLoaded = false;
+let activeWorkspaceView = "research";
 let latestWatchlist = new Set();
 
 const TICKER_STORAGE_KEY = "codeBeta.tickers";
@@ -15,6 +17,7 @@ const els = {
   openScreeningButton: document.querySelector("#openScreeningButton"),
   navPoolsButton: document.querySelector("#navPoolsButton"),
   navDetailsButton: document.querySelector("#navDetailsButton"),
+  navDataSourcesButton: document.querySelector("#navDataSourcesButton"),
   openRunsButton: document.querySelector("#openRunsButton"),
   globalSearch: document.querySelector("#globalSearch"),
   screeningDialog: document.querySelector("#screeningDialog"),
@@ -24,6 +27,10 @@ const els = {
   useFutuScreen: document.querySelector("#useFutuScreen"),
   useTradingView: document.querySelector("#useTradingView"),
   useSec: document.querySelector("#useSec"),
+  researchGrid: document.querySelector("#researchGrid"),
+  datasourcePage: document.querySelector("#datasourcePage"),
+  datasourceSummary: document.querySelector("#datasourceSummary"),
+  datasourceList: document.querySelector("#datasourceList"),
   candidatePoolList: document.querySelector("#candidatePoolList"),
   candidatePanelTitle: document.querySelector("#candidatePanelTitle"),
   candidateList: document.querySelector("#candidateList"),
@@ -159,6 +166,141 @@ async function refreshWatchlist() {
   } catch (error) {
     latestWatchlist = new Set();
   }
+}
+
+async function showWorkspaceView(view) {
+  activeWorkspaceView = view;
+  const datasourceView = view === "datasources";
+  els.researchGrid.hidden = datasourceView;
+  els.datasourcePage.hidden = !datasourceView;
+  els.openScreeningButton.classList.toggle("active", view === "screening");
+  els.navPoolsButton.classList.toggle("active", view === "research");
+  els.navDetailsButton.classList.toggle("active", view === "details");
+  els.navDataSourcesButton.classList.toggle("active", datasourceView);
+  if (datasourceView) await loadDataSources();
+}
+
+async function loadDataSources({force = false} = {}) {
+  if (datasourcesLoaded && !force) return;
+  els.datasourceList.innerHTML = `<div class="empty">Loading datasources</div>`;
+  try {
+    const data = await api("/api/datasources");
+    renderDataSources(data.sources || [], data.summary || {});
+    datasourcesLoaded = true;
+  } catch (error) {
+    els.datasourceList.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderDataSources(sources, summary) {
+  const scopeOrder = ["base", "sector", "ticker", "optional"];
+  const activeCount = sources.filter((source) => source.status === "active").length;
+  const plannedCount = sources.length - activeCount;
+  els.datasourceSummary.innerHTML = `
+    <span>${activeCount} active</span>
+    <span>${plannedCount} planned</span>
+    ${scopeOrder.map((scope) => `<span>${escapeHtml(scopeLabel(scope))} ${Number(summary[scope] || 0)}</span>`).join("")}
+  `;
+  if (!sources.length) {
+    els.datasourceList.innerHTML = `<div class="empty">No datasources registered</div>`;
+    return;
+  }
+  const grouped = groupDataSources(sources);
+  els.datasourceList.innerHTML = "";
+  for (const group of grouped) {
+    const section = document.createElement("section");
+    section.className = "datasource-group";
+    section.innerHTML = `
+      <div class="datasource-group-head">
+        <h3>${escapeHtml(scopeLabel(group.scope))}</h3>
+        <span>${group.items.length}</span>
+      </div>
+    `;
+    for (const source of group.items) {
+      section.appendChild(renderDataSourceCard(source));
+    }
+    els.datasourceList.appendChild(section);
+  }
+}
+
+function groupDataSources(sources) {
+  const order = ["base", "sector", "ticker", "optional"];
+  const byScope = new Map();
+  for (const source of sources) {
+    const scope = source.collection_scope || "optional";
+    if (!byScope.has(scope)) byScope.set(scope, []);
+    byScope.get(scope).push(source);
+  }
+  return [...byScope.entries()]
+    .sort(([left], [right]) => scopeRank(left, order) - scopeRank(right, order))
+    .map(([scope, items]) => ({
+      scope,
+      items: items.sort((a, b) => String(a.source_key).localeCompare(String(b.source_key))),
+    }));
+}
+
+function renderDataSourceCard(source) {
+  const article = document.createElement("article");
+  article.className = "datasource-card";
+  article.dataset.status = source.status || "active";
+  const dimensions = Array.isArray(source.dimensions) ? source.dimensions : [];
+  const keywords = Array.isArray(source.applies_to_keywords) ? source.applies_to_keywords : [];
+  const tickers = Array.isArray(source.applies_to_tickers) ? source.applies_to_tickers : [];
+  article.innerHTML = `
+    <div class="datasource-card-head">
+      <div>
+        <strong>${escapeHtml(source.source_name || source.source_key)}</strong>
+        <span>${escapeHtml(source.source_key || "")} · ${escapeHtml(source.source_type || "")}</span>
+      </div>
+      <mark>${escapeHtml(statusLabel(source.status, source.enabled))}</mark>
+    </div>
+    <div class="datasource-meta-grid">
+      <span><b>Provider</b>${escapeHtml(source.provider || "-")}</span>
+      <span><b>Scope</b>${escapeHtml(scopeLabel(source.collection_scope))}</span>
+      <span><b>Trust</b>${Number(source.trust_level || 0)}</span>
+      <span><b>Auth</b>${escapeHtml(source.auth || "none")}</span>
+    </div>
+    <div class="datasource-links">
+      ${source.website_url ? `<a href="${escapeHtml(source.website_url)}" target="_blank" rel="noreferrer">Website</a>` : ""}
+      ${source.docs_url ? `<a href="${escapeHtml(source.docs_url)}" target="_blank" rel="noreferrer">Docs</a>` : ""}
+    </div>
+    ${dimensions.length ? `<div class="datasource-chip-row">${dimensions.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
+    ${scopeDetail(keywords, tickers)}
+    <div class="datasource-detail-line"><b>Limits</b><span>${escapeHtml(source.rate_limit_summary || "-")}</span></div>
+    <div class="datasource-detail-line"><b>Cache</b><span>${escapeHtml(source.cache_policy || "-")}</span></div>
+    ${source.notes && source.notes.length ? `<p class="datasource-note">${escapeHtml(source.notes.join(" "))}</p>` : ""}
+  `;
+  return article;
+}
+
+function scopeDetail(keywords, tickers) {
+  if (!keywords.length && !tickers.length) return "";
+  return `
+    <div class="datasource-scope-detail">
+      ${keywords.length ? `<span><b>Keywords</b>${escapeHtml(keywords.slice(0, 8).join(" · "))}${keywords.length > 8 ? " ..." : ""}</span>` : ""}
+      ${tickers.length ? `<span><b>Tickers</b>${escapeHtml(tickers.slice(0, 12).join(" · "))}${tickers.length > 12 ? " ..." : ""}</span>` : ""}
+    </div>
+  `;
+}
+
+function scopeRank(scope, order) {
+  const index = order.indexOf(scope);
+  return index < 0 ? 99 : index;
+}
+
+function scopeLabel(scope) {
+  const labels = {
+    base: "Base",
+    optional: "Optional",
+    sector: "Sector Scoped",
+    ticker: "Ticker Scoped",
+  };
+  return labels[scope] || String(scope || "Optional");
+}
+
+function statusLabel(status, enabled) {
+  if (status === "planned") return "Planned";
+  return enabled === false ? "Disabled" : "Active";
 }
 
 function setCandidateSearchMode(isSearching) {
@@ -964,6 +1106,7 @@ function focusPanel(selector, target) {
 }
 
 function openScreeningDialog() {
+  showWorkspaceView("screening");
   if (typeof els.screeningDialog.showModal === "function") {
     els.screeningDialog.showModal();
   } else {
@@ -994,8 +1137,15 @@ function closeQueueDrawer() {
 }
 
 els.openScreeningButton.addEventListener("click", openScreeningDialog);
-els.navPoolsButton.addEventListener("click", () => focusPanel(".candidates", els.candidateSearch));
-els.navDetailsButton.addEventListener("click", () => focusPanel(".detail", els.rerunTickerButton));
+els.navPoolsButton.addEventListener("click", async () => {
+  await showWorkspaceView("research");
+  focusPanel(".candidates", els.candidateSearch);
+});
+els.navDetailsButton.addEventListener("click", async () => {
+  await showWorkspaceView("details");
+  focusPanel(".detail", els.rerunTickerButton);
+});
+els.navDataSourcesButton.addEventListener("click", () => showWorkspaceView("datasources"));
 els.openRunsButton.addEventListener("click", openQueueDrawer);
 els.closeScreeningDialog.addEventListener("click", closeScreeningDialog);
 els.runButton.addEventListener("click", startRun);
@@ -1034,6 +1184,7 @@ els.perSector.addEventListener("change", refreshAll);
 els.dimensionFilter.addEventListener("change", () => selectedTicker && loadTicker(selectedTicker));
 
 hydrateTickerInput();
+showWorkspaceView("research");
 setDetailTab("summary");
 refreshAll();
 setInterval(refreshRuns, 4000);

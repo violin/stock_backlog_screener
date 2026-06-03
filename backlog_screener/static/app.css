@@ -19,6 +19,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -479,6 +483,183 @@ select {
   border-radius: 8px;
   background: var(--surface);
   overflow: hidden;
+}
+
+.datasource-page {
+  min-height: 680px;
+}
+
+.datasource-head {
+  align-items: center;
+}
+
+.datasource-summary,
+.datasource-chip-row,
+.datasource-links,
+.datasource-scope-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.datasource-summary span,
+.datasource-chip-row span,
+.datasource-scope-detail span {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(17, 22, 29, 0.86);
+  color: var(--muted);
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.datasource-list {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.datasource-group {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 10px;
+}
+
+.datasource-group-head {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 2px 4px;
+}
+
+.datasource-group-head h3 {
+  color: #dbe5ee;
+  font-size: 14px;
+}
+
+.datasource-group-head span {
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.datasource-card {
+  display: grid;
+  gap: 11px;
+  min-height: 285px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #0e141b;
+  padding: 14px;
+}
+
+.datasource-card[data-status="planned"] {
+  border-color: rgba(245, 189, 79, 0.32);
+}
+
+.datasource-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.datasource-card-head strong {
+  display: block;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.datasource-card-head span {
+  display: block;
+  margin-top: 4px;
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.datasource-card-head mark {
+  min-height: 26px;
+  border: 1px solid rgba(101, 212, 126, 0.34);
+  border-radius: 999px;
+  background: rgba(101, 212, 126, 0.1);
+  color: var(--green);
+  padding: 4px 9px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.datasource-card[data-status="planned"] .datasource-card-head mark {
+  border-color: rgba(245, 189, 79, 0.38);
+  background: rgba(245, 189, 79, 0.1);
+  color: var(--amber);
+}
+
+.datasource-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 8px;
+}
+
+.datasource-meta-grid span,
+.datasource-detail-line {
+  min-width: 0;
+  border: 1px solid rgba(41, 52, 66, 0.72);
+  border-radius: 7px;
+  background: rgba(17, 22, 29, 0.62);
+  padding: 8px 9px;
+}
+
+.datasource-meta-grid b,
+.datasource-detail-line b,
+.datasource-scope-detail b {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.datasource-meta-grid span {
+  color: #d4dde6;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.datasource-links a {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(125, 184, 255, 0.32);
+  border-radius: 7px;
+  color: var(--blue);
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 850;
+  text-decoration: none;
+}
+
+.datasource-detail-line {
+  display: grid;
+  gap: 2px;
+}
+
+.datasource-detail-line span,
+.datasource-note {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.datasource-note {
+  padding-top: 2px;
 }
 
 .panel-head {

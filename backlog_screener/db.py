@@ -7,6 +7,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterable
 
+from .datasources import DATA_SOURCE_DEFINITIONS, source_payload
 from .settings import PROJECT_ROOT
 
 
@@ -53,107 +54,23 @@ class PostgresStore:
     def seed_sources(self) -> None:
         source_policies = _load_rate_limit_source_policies()
         sources = [
-            {
-                "source_key": "futu_opend",
-                "source_name": "Futu OpenD",
-                "source_type": "market_data",
-                "trust_level": 85,
-                "rate_limit_policy": source_policies.get(
-                    "futu_opend",
-                    {"mode": "local_gateway", "threading": "single", "delay_seconds": 1},
-                ),
-            },
-            {
-                "source_key": "sec_edgar",
-                "source_name": "SEC EDGAR",
-                "source_type": "filing",
-                "trust_level": 95,
-                "rate_limit_policy": source_policies.get(
-                    "sec_edgar",
-                    {"mode": "polite_http", "delay_seconds": 0.2, "cache_hours": 12},
-                ),
-            },
-            {
-                "source_key": "sec_companyfacts",
-                "source_name": "SEC Companyfacts",
-                "source_type": "fundamental",
-                "trust_level": 92,
-                "rate_limit_policy": {"mode": "polite_http", "delay_seconds": 0.2, "cache_hours": 12},
-            },
-            {
-                "source_key": "sec_form4",
-                "source_name": "SEC Form 4",
-                "source_type": "insider_transactions",
-                "trust_level": 92,
-                "rate_limit_policy": {"mode": "polite_http", "delay_seconds": 0.2, "cache_hours": 12},
-            },
-            {
-                "source_key": "sec_beneficial_ownership",
-                "source_name": "SEC Schedule 13D/G",
-                "source_type": "beneficial_ownership",
-                "trust_level": 88,
-                "rate_limit_policy": {"mode": "polite_http", "delay_seconds": 0.2, "cache_hours": 12},
-            },
-            {
-                "source_key": "sec_proxy_ownership",
-                "source_name": "SEC DEF 14A / 10-K Ownership Tables",
-                "source_type": "proxy_ownership",
-                "trust_level": 90,
-                "rate_limit_policy": {"mode": "polite_http", "delay_seconds": 0.2, "cache_hours": 24},
-            },
-            {
-                "source_key": "sec_13f",
-                "source_name": "SEC 13F Institutional Holdings",
-                "source_type": "institutional_holdings",
-                "trust_level": 82,
-                "rate_limit_policy": source_policies.get(
-                    "sec_13f",
-                    {"mode": "slow_optional", "threading": "single", "cache_hours": 24},
-                ),
-            },
-            {
-                "source_key": "usaspending",
-                "source_name": "USAspending.gov",
-                "source_type": "government_contracts",
-                "trust_level": 76,
-                "rate_limit_policy": source_policies.get(
-                    "usaspending",
-                    {"mode": "free_public_api", "threading": "single", "cache_hours": 24},
-                ),
-            },
-            {
-                "source_key": "yfinance",
-                "source_name": "Yahoo Finance via yFinance",
-                "source_type": "fallback_fundamental",
-                "trust_level": 58,
-                "rate_limit_policy": source_policies.get(
-                    "yfinance",
-                    {"mode": "cached_http", "delay_seconds": 5, "cache_hours": 24},
-                ),
-            },
-            {
-                "source_key": "minimax",
-                "source_name": "MiniMax M2.7",
-                "source_type": "llm_summary",
-                "trust_level": 70,
-                "rate_limit_policy": source_policies.get(
-                    "minimax",
-                    {"mode": "optional_llm", "threading": "single"},
-                ),
-            },
+            source_payload(source, source_policies.get(source.source_key))
+            for source in DATA_SOURCE_DEFINITIONS
         ]
         with self.connect() as conn:
             for source in sources:
                 conn.execute(
                     """
                     insert into data_sources
-                        (source_key, source_name, source_type, trust_level, rate_limit_policy)
-                    values (%s, %s, %s, %s, %s::jsonb)
+                        (source_key, source_name, source_type, trust_level, rate_limit_policy, enabled, metadata)
+                    values (%s, %s, %s, %s, %s::jsonb, %s, %s::jsonb)
                     on conflict (source_key) do update set
                         source_name = excluded.source_name,
                         source_type = excluded.source_type,
                         trust_level = excluded.trust_level,
                         rate_limit_policy = excluded.rate_limit_policy,
+                        enabled = excluded.enabled,
+                        metadata = excluded.metadata,
                         updated_at = now()
                     """,
                     (
@@ -162,9 +79,24 @@ class PostgresStore:
                         source["source_type"],
                         source["trust_level"],
                         json_dumps(source["rate_limit_policy"]),
+                        source["enabled"],
+                        json_dumps(source["metadata"]),
                     ),
                 )
             conn.commit()
+
+    def data_sources(self) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                select *
+                from data_sources
+                order by
+                    coalesce(metadata->>'collection_scope', ''),
+                    source_key
+                """
+            ).fetchall()
+            return list(rows)
 
     def start_run(self, *, tickers: list[str], trigger: str, config: dict[str, Any]) -> int:
         with self.connect() as conn:

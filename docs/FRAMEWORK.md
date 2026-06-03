@@ -31,6 +31,15 @@ security_scores
 
 接口级限流记录在 `configs/rate_limits.json`。大批量任务先看这个文件，再决定 batch size、delay、retry wait；特别是 Futu `get_capital_flow` 已实测为 30 次/30 秒量级，不能并发。
 
+数据源注册和适用范围集中在 `backlog_screener/datasources.py`：
+
+```text
+base       基础数据源，默认对所有 ticker 跑，例如 Futu OpenD、SEC filings/companyfacts/Form 4/ownership。
+optional   慢速或补充数据源，手动打开，例如 yFinance、SEC 13F、MiniMax；FMP、Fintel、Ortex、Finnhub、SEC-API.io 已作为 planned 候选源登记。
+sector     特定板块数据源，只对匹配 sector/industry/ticker 的公司跑，例如 USAspending；Launch Library、FCC、行业会议 agenda 已预留为 planned。
+ticker     单 ticker 官方来源，只在 company metadata 配置 official_sources 后跑，例如公司官网、IR 新闻、产品/发射日历。
+```
+
 ```text
 Futu OpenD
   条件选股粗筛、行情、市值、P/E、P/B、成交量、板块/行业归属、资金分布、资金流向、近期涨幅等低频 snapshot。

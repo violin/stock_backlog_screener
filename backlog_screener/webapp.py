@@ -8,6 +8,7 @@ from typing import Any
 
 from flask import Flask, jsonify, render_template, request
 
+from .datasources import DATA_SOURCE_DEFINITIONS, source_is_requested
 from .db import PostgresStore
 from .futu_provider import FutuProvider
 from .llm import MiniMaxClient
@@ -67,6 +68,15 @@ def create_app(*, store: PostgresStore, settings: AppSettings) -> Flask:
     @app.get("/api/sectors")
     def sectors():
         return jsonify(_clean_json({"sectors": store.ranked_sectors()}))
+
+    @app.get("/api/datasources")
+    def datasources():
+        rows = [_datasource_payload(row) for row in store.data_sources()]
+        summary: dict[str, int] = {}
+        for row in rows:
+            scope = row.get("collection_scope") or "optional"
+            summary[scope] = summary.get(scope, 0) + 1
+        return jsonify(_clean_json({"sources": rows, "summary": summary}))
 
     @app.get("/api/candidates/search")
     def search_candidates():
@@ -564,19 +574,15 @@ def _enrich_run(row: dict[str, Any], counts: dict[str, Any]) -> dict[str, Any]:
 
 def _expected_run_units(config: dict[str, Any]) -> list[str]:
     units = []
-    if config.get("use_futu", True):
-        units.extend(["market", "valuation", "sector", "attention_flow"])
-    if config.get("use_sec", True):
-        units.extend(["backlog", "backlog_quality", "growth", "quality", "ownership", "insider_activity"])
-    if config.get("use_13f", False):
-        units.append("institutional_activity")
-    if config.get("use_usaspending", False):
-        units.append("government_contract")
-    if config.get("use_yfinance", False) and "valuation" not in units:
-        units.append("valuation")
-    if config.get("summarize", False):
-        units.append("company_summary")
-    if config.get("use_sec", True) or config.get("use_yfinance", False):
+    has_requested_source = False
+    for source in DATA_SOURCE_DEFINITIONS:
+        if source.status != "active" or not source_is_requested(source, config):
+            continue
+        has_requested_source = True
+        for dimension in source.dimensions:
+            if dimension not in units:
+                units.append(dimension)
+    if has_requested_source:
         units.append("score")
     return units or ["score"]
 
@@ -595,6 +601,7 @@ def _dimension_monitor_label(dimension: str) -> str:
         "insider_activity": "Insider Activity",
         "institutional_activity": "Institutions",
         "government_contract": "Gov Contracts",
+        "future_events": "Future Events",
         "company_summary": "AI Summary",
         "score": "Score",
     }
@@ -712,6 +719,37 @@ def _company_summary_text(summary: dict[str, Any]) -> str:
     if summary.get("watch_items"):
         parts.append("跟踪要点：" + "；".join(summary["watch_items"]))
     return "\n".join(parts)
+
+
+def _datasource_payload(row: dict[str, Any]) -> dict[str, Any]:
+    metadata = row.get("metadata") or {}
+    rate_limit_policy = row.get("rate_limit_policy") or {}
+    return {
+        "source_key": row.get("source_key"),
+        "source_name": row.get("source_name"),
+        "source_type": row.get("source_type"),
+        "trust_level": row.get("trust_level"),
+        "enabled": row.get("enabled"),
+        "updated_at": row.get("updated_at"),
+        "provider": metadata.get("provider") or "",
+        "website_url": metadata.get("website_url") or "",
+        "docs_url": metadata.get("docs_url") or "",
+        "collection_scope": metadata.get("collection_scope") or "optional",
+        "run_flag": metadata.get("run_flag") or "",
+        "collector_group": metadata.get("collector_group") or "",
+        "default_enabled": metadata.get("default_enabled") or False,
+        "status": metadata.get("status") or ("active" if row.get("enabled") else "planned"),
+        "auth": metadata.get("auth") or "none",
+        "dimensions": metadata.get("dimensions") or [],
+        "applies_to_keywords": metadata.get("applies_to_keywords") or [],
+        "applies_to_tickers": metadata.get("applies_to_tickers") or [],
+        "rate_limit_summary": metadata.get("rate_limit_summary")
+        or rate_limit_policy.get("observed_limit")
+        or "",
+        "cache_policy": metadata.get("cache_policy") or "",
+        "notes": metadata.get("notes") or [],
+        "rate_limit_policy": rate_limit_policy,
+    }
 
 
 def _short_trend_error(message: str) -> str:

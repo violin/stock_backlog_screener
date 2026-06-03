@@ -163,12 +163,22 @@ http://127.0.0.1:5055
 ```text
 按板块分组列出候选标的
 每个板块保留 5-10 个最高分标的，避免单一热门板块挤占 Top 100
+Datasource 页面展示 source_key、来源、网站、适用范围、限流和缓存策略
 AI Summary 窗口：用 MiniMax prompt 总结公司业务、行业角色、推荐理由、风险和跟踪点，并缓存到信息层
 查看每个标的的时间线
 按信息维度筛选：company_summary / sector / valuation / growth / backlog / backlog_quality / ownership / institutional_activity / insider_activity / government_contract / quality / market
 触发低频后台采集
 查看原始片段、信息来源、摘要、重要度、分项评分
 可选 USAspending 联邦合同证据源，用于政府订单/补贴型隐形冠军线索
+```
+
+数据源路由由 `backlog_screener/datasources.py` 集中管理：
+
+```text
+base       Futu / SEC 等基础源，默认覆盖所有 ticker
+optional   yFinance / 13F / MiniMax 等慢速或补充源，手动打开；FMP / Fintel / Ortex / Finnhub / SEC-API.io 作为 planned 候选源登记
+sector     USAspending / Launch Library / FCC / 行业会议 agenda 等特定板块源，只对匹配行业或 ticker 跑
+ticker     公司官网 / IR / 官方新闻源，只在该 ticker 配置了官方来源后跑
 ```
 
 当前简明框架和阶段 checklist：

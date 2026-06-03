@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from .config import BacklogScanConfig
+from .datasources import SOURCE_REGISTRY_VERSION, should_collect_source
 from .db import PostgresStore
 from .futu_provider import (
     FutuProvider,
@@ -67,6 +68,7 @@ class HiddenChampionPipeline:
             "use_usaspending": use_usaspending,
             "summarize": summarize,
             "delay_seconds": delay_seconds,
+            "source_registry_version": SOURCE_REGISTRY_VERSION,
         }
         if run_context:
             config.update(run_context)
@@ -80,7 +82,7 @@ class HiddenChampionPipeline:
             for ticker in clean_tickers:
                 self.store.upsert_company(ticker, market="US", futu_code=futu_code(ticker, self.settings.futu_market))
 
-            if use_futu:
+            if should_collect_source("futu_opend", config):
                 _notify(progress_callback, {"event": "stage", "stage": "Futu OpenD bulk snapshot"})
                 self._collect_futu(run_id, clean_tickers)
 
@@ -88,7 +90,7 @@ class HiddenChampionPipeline:
             usaspending_client = (
                 USASpendingClient(PROJECT_ROOT / ".cache" / "usaspending") if use_usaspending else None
             )
-            llm_client = self._llm_client() if summarize else None
+            llm_client = self._llm_client() if should_collect_source("minimax", config) else None
             for index, ticker in enumerate(clean_tickers, start=1):
                 _notify(
                     progress_callback,
@@ -99,21 +101,22 @@ class HiddenChampionPipeline:
                         "total": len(clean_tickers),
                     },
                 )
-                if use_sec:
+                company = self.store.company(ticker) or {"ticker": ticker}
+                if should_collect_source("sec_edgar", config, company):
                     _notify(progress_callback, {"event": "stage", "stage": f"{ticker} SEC filings"})
                     self._collect_sec_filing(run_id, ticker, sec_client, llm_client)
                     self._collect_sec_companyfacts(run_id, ticker, sec_client)
                     self._collect_sec_form4(run_id, ticker, sec_client)
                     self._collect_sec_beneficial_ownership(run_id, ticker, sec_client)
                     self._collect_sec_proxy_ownership(run_id, ticker, sec_client)
-                    if use_13f:
+                    if should_collect_source("sec_13f", config, company):
                         self._collect_sec_13f(run_id, ticker, sec_client)
                     time.sleep(max(0, delay_seconds))
-                if usaspending_client is not None:
+                if usaspending_client is not None and should_collect_source("usaspending", config, company):
                     _notify(progress_callback, {"event": "stage", "stage": f"{ticker} USAspending contracts"})
                     self._collect_usaspending(run_id, ticker, usaspending_client)
                     time.sleep(max(0, delay_seconds))
-                if use_yfinance:
+                if should_collect_source("yfinance", config, company):
                     _notify(progress_callback, {"event": "stage", "stage": f"{ticker} yFinance fallback"})
                     self._collect_yfinance(run_id, ticker)
                     time.sleep(max(0, delay_seconds))

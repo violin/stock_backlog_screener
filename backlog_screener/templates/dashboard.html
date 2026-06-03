@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Code-Beta</title>
-    <link rel="stylesheet" href="/static/app.css?v=20260603e" />
+    <link rel="stylesheet" href="/static/app.css?v=20260603g" />
   </head>
   <body>
     <main class="shell">
@@ -40,6 +40,7 @@
           <button id="openScreeningButton" class="nav-link active" type="button">Screening</button>
           <button id="navPoolsButton" class="nav-link" type="button">Candidates</button>
           <button id="navDetailsButton" class="nav-link" type="button">Details</button>
+          <button id="navDataSourcesButton" class="nav-link" type="button">Datasources</button>
           <button id="openRunsButton" class="nav-link" type="button">Runs</button>
         </nav>
         <div class="topbar-actions">
@@ -55,7 +56,7 @@
         </div>
       </header>
 
-      <section class="grid">
+      <section id="researchGrid" class="grid">
         <aside class="panel candidates">
           <div class="panel-head stacked-head">
             <div class="panel-title-row">
@@ -183,6 +184,16 @@
           </div>
         </section>
       </section>
+      <section id="datasourcePage" class="panel datasource-page" hidden>
+        <div class="panel-head datasource-head">
+          <div>
+            <p class="eyebrow">Datasources</p>
+            <h2>Datasource Registry</h2>
+          </div>
+          <div id="datasourceSummary" class="datasource-summary"></div>
+        </div>
+        <div id="datasourceList" class="datasource-list"></div>
+      </section>
     </main>
 
     <dialog id="screeningDialog" class="screening-dialog">
@@ -231,11 +242,11 @@
             <span>SEC / EDGAR</span>
           </label>
           <label class="check">
-            <input id="useYfinance" type="checkbox" checked />
+            <input id="useYfinance" type="checkbox" />
             <span>yFinance</span>
           </label>
           <label class="check">
-            <input id="use13f" type="checkbox" checked />
+            <input id="use13f" type="checkbox" />
             <span>13F</span>
           </label>
           <label class="check">
@@ -243,7 +254,7 @@
             <span>USAspending</span>
           </label>
           <label class="check">
-            <input id="useMinimax" type="checkbox" checked />
+            <input id="useMinimax" type="checkbox" />
             <span>MiniMax</span>
           </label>
         </div>
@@ -296,6 +307,6 @@
         <div id="queueFailed" class="queue-list muted">None</div>
       </details>
     </aside>
-    <script src="/static/app.js?v=20260603e"></script>
+    <script src="/static/app.js?v=20260603g"></script>
   </body>
 </html>
