@@ -197,8 +197,8 @@ function renderDataSources(sources, summary) {
   const activeCount = sources.filter((source) => source.status === "active").length;
   const plannedCount = sources.length - activeCount;
   els.datasourceSummary.innerHTML = `
-    <span>${activeCount} active</span>
-    <span>${plannedCount} planned</span>
+    <span>${activeCount} active / 已接入</span>
+    <span>${plannedCount} planned / 待接入</span>
     ${scopeOrder.map((scope) => `<span>${escapeHtml(scopeLabel(scope))} ${Number(summary[scope] || 0)}</span>`).join("")}
   `;
   if (!sources.length) {
@@ -235,7 +235,12 @@ function groupDataSources(sources) {
     .sort(([left], [right]) => scopeRank(left, order) - scopeRank(right, order))
     .map(([scope, items]) => ({
       scope,
-      items: items.sort((a, b) => String(a.source_key).localeCompare(String(b.source_key))),
+      items: items.sort((a, b) => {
+        const leftPriority = Number(a.rdw_priority || 99);
+        const rightPriority = Number(b.rdw_priority || 99);
+        if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+        return String(a.source_key).localeCompare(String(b.source_key));
+      }),
     }));
 }
 
@@ -246,29 +251,46 @@ function renderDataSourceCard(source) {
   const dimensions = Array.isArray(source.dimensions) ? source.dimensions : [];
   const keywords = Array.isArray(source.applies_to_keywords) ? source.applies_to_keywords : [];
   const tickers = Array.isArray(source.applies_to_tickers) ? source.applies_to_tickers : [];
+  const notes = Array.isArray(source.notes) ? source.notes : [];
+  const notesZh = Array.isArray(source.notes_zh) ? source.notes_zh : [];
+  const rdwPriority = Number(source.rdw_priority || 0);
   article.innerHTML = `
     <div class="datasource-card-head">
       <div>
         <strong>${escapeHtml(source.source_name || source.source_key)}</strong>
-        <span>${escapeHtml(source.source_key || "")} · ${escapeHtml(source.source_type || "")}</span>
+        ${source.source_name_zh ? `<em>${escapeHtml(source.source_name_zh)}</em>` : ""}
+        <span>${escapeHtml(source.source_key || "")} · ${escapeHtml(source.source_type || "")}${source.source_type_zh ? ` / ${escapeHtml(source.source_type_zh)}` : ""}</span>
       </div>
       <mark>${escapeHtml(statusLabel(source.status, source.enabled))}</mark>
     </div>
+    ${rdwPriority ? `
+      <div class="datasource-priority">
+        <b>RDW Priority / RDW 优先级</b>
+        <strong>P${rdwPriority}</strong>
+        <span>${escapeHtml(source.rdw_priority_reason_zh || source.rdw_priority_reason_en || "-")}</span>
+        ${source.rdw_priority_reason_en ? `<small>${escapeHtml(source.rdw_priority_reason_en)}</small>` : ""}
+      </div>
+    ` : ""}
+    <div class="datasource-purpose">
+      <b>用途 / What it does</b>
+      <span>${escapeHtml(source.purpose_zh || source.purpose_en || "-")}</span>
+      ${source.purpose_en ? `<small>${escapeHtml(source.purpose_en)}</small>` : ""}
+    </div>
     <div class="datasource-meta-grid">
-      <span><b>Provider</b>${escapeHtml(source.provider || "-")}</span>
-      <span><b>Scope</b>${escapeHtml(scopeLabel(source.collection_scope))}</span>
-      <span><b>Trust</b>${Number(source.trust_level || 0)}</span>
-      <span><b>Auth</b>${escapeHtml(source.auth || "none")}</span>
+      <span><b>Provider / 来源</b>${escapeHtml(source.provider || "-")}${source.provider_zh ? ` / ${escapeHtml(source.provider_zh)}` : ""}</span>
+      <span><b>Scope / 范围</b>${escapeHtml(scopeLabel(source.collection_scope))}</span>
+      <span><b>Trust / 可信度</b>${Number(source.trust_level || 0)}</span>
+      <span><b>Auth / 认证</b>${escapeHtml(source.auth || "none")}</span>
     </div>
     <div class="datasource-links">
-      ${source.website_url ? `<a href="${escapeHtml(source.website_url)}" target="_blank" rel="noreferrer">Website</a>` : ""}
-      ${source.docs_url ? `<a href="${escapeHtml(source.docs_url)}" target="_blank" rel="noreferrer">Docs</a>` : ""}
+      ${source.website_url ? `<a href="${escapeHtml(source.website_url)}" target="_blank" rel="noreferrer">Website / 官网</a>` : ""}
+      ${source.docs_url ? `<a href="${escapeHtml(source.docs_url)}" target="_blank" rel="noreferrer">Docs / 文档</a>` : ""}
     </div>
     ${dimensions.length ? `<div class="datasource-chip-row">${dimensions.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
     ${scopeDetail(keywords, tickers)}
-    <div class="datasource-detail-line"><b>Limits</b><span>${escapeHtml(source.rate_limit_summary || "-")}</span></div>
-    <div class="datasource-detail-line"><b>Cache</b><span>${escapeHtml(source.cache_policy || "-")}</span></div>
-    ${source.notes && source.notes.length ? `<p class="datasource-note">${escapeHtml(source.notes.join(" "))}</p>` : ""}
+    <div class="datasource-detail-line"><b>Limits / 限流</b><span>${escapeHtml(source.rate_limit_summary_zh || source.rate_limit_summary || "-")}</span>${source.rate_limit_summary ? `<small>${escapeHtml(source.rate_limit_summary)}</small>` : ""}</div>
+    <div class="datasource-detail-line"><b>Cache / 缓存</b><span>${escapeHtml(source.cache_policy_zh || source.cache_policy || "-")}</span>${source.cache_policy ? `<small>${escapeHtml(source.cache_policy)}</small>` : ""}</div>
+    ${notesZh.length || notes.length ? `<p class="datasource-note">${escapeHtml((notesZh.length ? notesZh : notes).join(" "))}${notesZh.length && notes.length ? `<small>${escapeHtml(notes.join(" "))}</small>` : ""}</p>` : ""}
   `;
   return article;
 }
@@ -277,7 +299,7 @@ function scopeDetail(keywords, tickers) {
   if (!keywords.length && !tickers.length) return "";
   return `
     <div class="datasource-scope-detail">
-      ${keywords.length ? `<span><b>Keywords</b>${escapeHtml(keywords.slice(0, 8).join(" · "))}${keywords.length > 8 ? " ..." : ""}</span>` : ""}
+      ${keywords.length ? `<span><b>Keywords / 关键词</b>${escapeHtml(keywords.slice(0, 8).join(" · "))}${keywords.length > 8 ? " ..." : ""}</span>` : ""}
       ${tickers.length ? `<span><b>Tickers</b>${escapeHtml(tickers.slice(0, 12).join(" · "))}${tickers.length > 12 ? " ..." : ""}</span>` : ""}
     </div>
   `;
@@ -290,17 +312,17 @@ function scopeRank(scope, order) {
 
 function scopeLabel(scope) {
   const labels = {
-    base: "Base",
-    optional: "Optional",
-    sector: "Sector Scoped",
-    ticker: "Ticker Scoped",
+    base: "Base / 基础",
+    optional: "Optional / 可选",
+    sector: "Sector Scoped / 板块限定",
+    ticker: "Ticker Scoped / 单票限定",
   };
-  return labels[scope] || String(scope || "Optional");
+  return labels[scope] || String(scope || "Optional / 可选");
 }
 
 function statusLabel(status, enabled) {
-  if (status === "planned") return "Planned";
-  return enabled === false ? "Disabled" : "Active";
+  if (status === "planned") return "Planned / 待接入";
+  return enabled === false ? "Disabled / 已停用" : "Active / 已接入";
 }
 
 function setCandidateSearchMode(isSearching) {

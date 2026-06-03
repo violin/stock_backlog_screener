@@ -40,6 +40,16 @@ sector     特定板块数据源，只对匹配 sector/industry/ticker 的公司
 ticker     单 ticker 官方来源，只在 company metadata 配置 official_sources 后跑，例如公司官网、IR 新闻、产品/发射日历。
 ```
 
+RDW 接入优先级按“订单真实性 -> 官方催化剂 -> 航天任务事件 -> 筹码/空头 -> 通用日历”排序：
+
+```text
+P1  Futu OpenD、SEC EDGAR、SEC companyfacts、USAspending、company_official。
+P2  Launch Library 2。
+P3  FMP、SEC-API.io、Fintel、SEC 13F、SEC Form 4 / ownership 已有 SEC 基础解析。
+P4  FCC、Finnhub、OpenInsider、Ortex、industry agenda、yFinance。
+P5  MiniMax 摘要层。
+```
+
 ```text
 Futu OpenD
   条件选股粗筛、行情、市值、P/E、P/B、成交量、板块/行业归属、资金分布、资金流向、近期涨幅等低频 snapshot。

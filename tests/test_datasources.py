@@ -1,6 +1,7 @@
 import unittest
 
 from backlog_screener.datasources import (
+    source_payload,
     selected_source_keys,
     should_collect_source,
     source_definition,
@@ -51,6 +52,26 @@ class DatasourceRegistryTests(unittest.TestCase):
                 {"ticker": "TEST", "metadata": {"official_sources": ["https://example.com/news"]}},
             )
         )
+
+    def test_datasource_payload_includes_bilingual_purpose(self):
+        payload = source_payload(source_definition("usaspending"))
+        metadata = payload["metadata"]
+
+        self.assertIn("purpose_en", metadata)
+        self.assertIn("purpose_zh", metadata)
+        self.assertIn("政府", metadata["purpose_zh"])
+
+    def test_rdw_priority_highlights_contract_and_official_sources(self):
+        priorities = {
+            key: source_payload(source_definition(key))["metadata"]["rdw_priority"]
+            for key in ("company_official", "sec_edgar", "sec_companyfacts", "usaspending", "launch_library")
+        }
+
+        self.assertEqual(priorities["company_official"], 1)
+        self.assertEqual(priorities["sec_edgar"], 1)
+        self.assertEqual(priorities["sec_companyfacts"], 1)
+        self.assertEqual(priorities["usaspending"], 1)
+        self.assertEqual(priorities["launch_library"], 2)
 
 
 if __name__ == "__main__":

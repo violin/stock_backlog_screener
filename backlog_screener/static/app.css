@@ -576,6 +576,15 @@ select {
   font-size: 15px;
 }
 
+.datasource-card-head em {
+  display: block;
+  margin-top: 3px;
+  color: #b8c4cf;
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 850;
+}
+
 .datasource-card-head span {
   display: block;
   margin-top: 4px;
@@ -608,7 +617,9 @@ select {
 }
 
 .datasource-meta-grid span,
-.datasource-detail-line {
+.datasource-detail-line,
+.datasource-purpose,
+.datasource-priority {
   min-width: 0;
   border: 1px solid rgba(41, 52, 66, 0.72);
   border-radius: 7px;
@@ -618,6 +629,8 @@ select {
 
 .datasource-meta-grid b,
 .datasource-detail-line b,
+.datasource-purpose b,
+.datasource-priority b,
 .datasource-scope-detail b {
   display: block;
   margin-bottom: 4px;
@@ -651,10 +664,43 @@ select {
   gap: 2px;
 }
 
+.datasource-purpose,
+.datasource-priority {
+  display: grid;
+  gap: 5px;
+}
+
+.datasource-priority {
+  border-color: rgba(245, 189, 79, 0.24);
+  background: rgba(245, 189, 79, 0.06);
+}
+
+.datasource-priority strong {
+  width: max-content;
+  border-radius: 999px;
+  background: rgba(245, 189, 79, 0.14);
+  color: var(--amber);
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 950;
+}
+
 .datasource-detail-line span,
+.datasource-purpose span,
+.datasource-priority span,
 .datasource-note {
   color: var(--muted);
   font-size: 12px;
+  line-height: 1.45;
+}
+
+.datasource-detail-line small,
+.datasource-purpose small,
+.datasource-priority small,
+.datasource-note small {
+  display: block;
+  color: var(--faint);
+  font-size: 11px;
   line-height: 1.45;
 }
 
