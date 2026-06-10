@@ -1,0 +1,35 @@
+{
+  "ASTS": {
+    "keywords": [
+      "AST SpaceMobile",
+      "AST & Science",
+      "BlueBird",
+      "BlueWalker",
+      "SpaceMobile"
+    ],
+    "notes": "Satellite payload and constellation keywords for AST SpaceMobile."
+  },
+  "RDW": {
+    "keywords": [
+      "Redwire",
+      "Redwire Space",
+      "Roll-Out Solar Array",
+      "Archinaut",
+      "PILOT biomanufacturing",
+      "pharmaceutical crystal growth"
+    ],
+    "notes": "Redwire payload, platform, and space-manufacturing keywords."
+  },
+  "RKLB": {
+    "keywords": [
+      "Rocket Lab",
+      "Electron",
+      "Neutron",
+      "Photon"
+    ],
+    "provider_keywords": [
+      "Rocket Lab"
+    ],
+    "notes": "Provider and launch vehicle keywords for Rocket Lab."
+  }
+}

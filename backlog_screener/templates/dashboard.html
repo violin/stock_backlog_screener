@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Code-Beta</title>
-    <link rel="stylesheet" href="/static/app.css?v=20260603i" />
+    <link rel="stylesheet" href="/static/app.css?v=20260607f" />
   </head>
   <body>
     <main class="shell">
@@ -13,31 +13,33 @@
           <span class="brand-mark" aria-hidden="true">
             <svg class="brand-logo" viewBox="0 0 64 64" role="img">
               <defs>
-                <linearGradient id="logoBadgeGradient" x1="10" y1="8" x2="54" y2="56" gradientUnits="userSpaceOnUse">
-                  <stop offset="0" stop-color="#152334" />
-                  <stop offset="1" stop-color="#071018" />
-                </linearGradient>
-                <linearGradient id="logoStepGradient" x1="15" y1="44" x2="48" y2="17" gradientUnits="userSpaceOnUse">
+                <linearGradient id="logoSignalGradient" x1="12" y1="50" x2="52" y2="14" gradientUnits="userSpaceOnUse">
                   <stop offset="0" stop-color="#4fd1c5" />
-                  <stop offset="0.55" stop-color="#7db8ff" />
+                  <stop offset="0.5" stop-color="#7db8ff" />
                   <stop offset="1" stop-color="#f5bd4f" />
                 </linearGradient>
+                <radialGradient id="logoCoreGlow" cx="50%" cy="48%" r="62%">
+                  <stop offset="0" stop-color="#7db8ff" stop-opacity="0.42" />
+                  <stop offset="0.62" stop-color="#4fd1c5" stop-opacity="0.14" />
+                  <stop offset="1" stop-color="#4fd1c5" stop-opacity="0" />
+                </radialGradient>
               </defs>
-              <rect class="logo-badge" x="9" y="9" width="46" height="46" rx="12" />
-              <path class="logo-scan" d="M16 18h20M16 47h32" />
-              <path class="logo-steps" d="M17 43V33h8v10M28 43V27h8v16M39 43V20h8v23" />
-              <path class="logo-rise" d="M16 43h9l7-9 8 4 9-16" />
-              <path class="logo-star" d="M47 13l2 4 4 2-4 2-2 4-2-4-4-2 4-2z" />
-              <circle class="logo-anchor" cx="16" cy="43" r="2.5" />
+              <circle class="logo-halo" cx="32" cy="32" r="28" />
+              <path class="logo-frame" d="M18 47 8 32l10-15h28l10 15-10 15z" />
+              <path class="logo-radar" d="M18 32h8l5-9 7 19 5-10h5" />
+              <path class="logo-bolt" d="M37 13 24 34h9l-6 17 15-23h-9z" />
+              <circle class="logo-node logo-node-a" cx="18" cy="32" r="2.6" />
+              <circle class="logo-node logo-node-b" cx="48" cy="32" r="2.6" />
             </svg>
           </span>
           <div class="brand-copy">
             <p class="eyebrow">Code-Beta</p>
-            <h1>Hidden Champion Research Desk</h1>
+            <h1>美股投研平台</h1>
           </div>
         </div>
         <nav class="workspace-menu" aria-label="Workspace menu">
           <button id="openScreeningButton" class="nav-link active" type="button">Screening</button>
+          <button id="navOpeningRadarButton" class="nav-link" type="button">Opening Radar</button>
           <button id="navPoolsButton" class="nav-link" type="button">Candidates</button>
           <button id="navDetailsButton" class="nav-link" type="button">Details</button>
           <button id="navDataSourcesButton" class="nav-link" type="button">Datasources</button>
@@ -116,6 +118,7 @@
                     <button id="summaryTab" class="detail-tab active" type="button">AI Summary</button>
                     <button id="truthTab" class="detail-tab" type="button">Truth</button>
                     <button id="timetableTab" class="detail-tab" type="button">Timetable</button>
+                    <button id="chartTab" class="detail-tab" type="button">Chart</button>
                   </div>
                   <label class="mini-field dimension-filter">
                     <span>Truth Filter</span>
@@ -141,10 +144,6 @@
               <div class="detail-side-cluster">
                 <aside id="trendMiniChart" class="trend-mini-chart">
                   <div class="trend-mini-head">
-                    <div>
-                      <span>Lifetime Trend</span>
-                      <small>Total return</small>
-                    </div>
                     <strong id="trendReturn">-</strong>
                   </div>
                   <div id="trendChartBody" class="trend-chart-body">
@@ -156,31 +155,53 @@
                   </div>
                 </aside>
                 <div class="detail-actions">
-                  <button id="rerunTickerButton" class="ghost-button rerun-button" type="button">Update</button>
-                  <button id="detailWatchButton" class="watch-button" type="button">Watch</button>
-                  <button id="summaryButton" class="summary-action-button" type="button">AI Rewrite</button>
+                  <button id="detailWatchButton" class="watch-button" type="button" aria-label="Add to watchlist" title="Add to watchlist"></button>
                 </div>
               </div>
             </div>
           </div>
           <section id="summaryPanel" class="detail-panel summary-window active">
-            <div class="summary-head">
+            <div class="tab-toolbar summary-head">
               <div>
                 <h3>AI Summary</h3>
-                <p id="summaryMeta">MiniMax prompt summary</p>
+                <p id="summaryMeta">LLM prompt summary</p>
               </div>
+              <button id="summaryButton" class="summary-action-button" type="button">Regenerate</button>
             </div>
             <div id="summaryBody" class="summary-body">
               <div class="empty">No summary yet</div>
             </div>
           </section>
           <div id="truthPanel" class="detail-panel">
+            <div class="tab-toolbar">
+              <div>
+                <strong>Truth Evidence</strong>
+                <span>Refetch base filings, market data, and selected evidence sources</span>
+              </div>
+              <button id="rerunTickerButton" class="ghost-button rerun-button" type="button">Refetch Truth</button>
+            </div>
             <div id="missingData" class="missing-strip"></div>
             <div id="scoreBreakdown" class="score-grid"></div>
             <div id="timeline" class="timeline"></div>
           </div>
           <div id="timetablePanel" class="detail-panel">
+            <div class="tab-toolbar timetable-toolbar">
+              <div>
+                <strong>Event Timetable</strong>
+                <span id="timetableStatus">Official and configured event sources</span>
+              </div>
+              <button id="refreshTimetableButton" class="ghost-button tab-action-button" type="button">Refresh Events</button>
+            </div>
             <div id="futureTimeline" class="future-timeline"></div>
+          </div>
+          <div id="chartPanel" class="detail-panel chart-panel">
+            <div class="tradingview-head">
+              <strong>TradingView</strong>
+              <a id="tradingViewLink" href="https://www.tradingview.com/" target="_blank" rel="noreferrer">Open TradingView</a>
+            </div>
+            <div id="tradingViewWidget" class="tradingview-widget-container tradingview-widget-shell">
+              <div class="empty">Select a ticker</div>
+            </div>
           </div>
         </section>
       </section>
@@ -193,6 +214,38 @@
           <div id="datasourceSummary" class="datasource-summary"></div>
         </div>
         <div id="datasourceList" class="datasource-list"></div>
+      </section>
+      <section id="openingRadarPage" class="panel opening-radar-page" hidden>
+        <div class="panel-head opening-radar-head">
+          <div>
+            <p class="eyebrow">Opening Radar</p>
+            <h2>Opening Radar</h2>
+          </div>
+          <div class="opening-radar-actions">
+            <span id="openingRadarAsOf">-</span>
+            <button id="refreshOpeningRadarButton" class="ghost-button" type="button">Refresh</button>
+            <button id="generateOpeningAdviceButton" class="summary-action-button" type="button">AI Prep</button>
+          </div>
+        </div>
+        <div class="opening-radar-layout">
+          <section>
+            <div id="openingRadarPrimary" class="opening-radar-stack"></div>
+            <div class="sector-radar-shell">
+              <div id="sectorRadarTabs" class="detail-tabs sector-radar-tabs" role="tablist" aria-label="Sector radar tabs"></div>
+              <div id="sectorRadarPanel" class="opening-radar-stack"></div>
+            </div>
+          </section>
+          <aside class="opening-advice-panel">
+            <div class="opening-advice-head">
+              <strong>AI Prep</strong>
+              <span id="openingAdviceMeta">Manual trigger</span>
+            </div>
+            <div id="openingReportHistory" class="opening-report-history"></div>
+            <div id="openingAdviceBody" class="opening-advice-body">
+              <div class="empty">Review facts first, then trigger AI Prep.</div>
+            </div>
+          </aside>
+        </div>
       </section>
     </main>
 
@@ -228,10 +281,6 @@
             <input id="useFutuScreen" type="checkbox" checked />
             <span>Futu OpenD</span>
           </label>
-          <label class="check">
-            <input id="useTradingView" type="checkbox" />
-            <span>TradingView</span>
-          </label>
         </div>
       </div>
       <div class="screening-section">
@@ -254,8 +303,20 @@
             <span>USAspending</span>
           </label>
           <label class="check">
+            <input id="useLaunchLibrary" type="checkbox" />
+            <span>Launch Library</span>
+          </label>
+          <label class="check">
+            <input id="useCompanyOfficial" type="checkbox" />
+            <span>Official Sources</span>
+          </label>
+          <label class="check">
+            <input id="useOpenInsider" type="checkbox" />
+            <span>OpenInsider</span>
+          </label>
+          <label class="check">
             <input id="useMinimax" type="checkbox" />
-            <span>MiniMax</span>
+            <span>LLM Summary</span>
           </label>
         </div>
       </div>
@@ -307,6 +368,6 @@
         <div id="queueFailed" class="queue-list muted">None</div>
       </details>
     </aside>
-    <script src="/static/app.js?v=20260603i"></script>
+    <script src="/static/app.js?v=20260607f"></script>
   </body>
 </html>

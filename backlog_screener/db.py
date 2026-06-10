@@ -329,6 +329,98 @@ class PostgresStore:
             ).fetchone()
             return dict(row) if row else None
 
+    def save_opening_radar_snapshot(
+        self,
+        *,
+        report_date: date,
+        snapshot: dict[str, Any],
+        session_label: str = "pre_open",
+    ) -> dict[str, Any]:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                insert into opening_radar_reports (report_date, session_label, snapshot)
+                values (%s, %s, %s::jsonb)
+                on conflict (report_date, session_label) do update set
+                    snapshot = excluded.snapshot,
+                    updated_at = now()
+                returning *
+                """,
+                (report_date, session_label, json_dumps(snapshot)),
+            ).fetchone()
+            conn.commit()
+            return dict(row)
+
+    def save_opening_radar_advice(
+        self,
+        *,
+        report_id: int,
+        advice: dict[str, Any],
+        provider: str,
+        prompt: str,
+        raw_response: str = "",
+    ) -> dict[str, Any]:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                update opening_radar_reports
+                set advice = %s::jsonb,
+                    provider = %s,
+                    prompt = %s,
+                    raw_response = %s,
+                    updated_at = now()
+                where id = %s
+                returning *
+                """,
+                (json_dumps(advice), provider, prompt, raw_response, report_id),
+            ).fetchone()
+            conn.commit()
+            return dict(row) if row else {}
+
+    def latest_opening_radar_report(self) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                select *
+                from opening_radar_reports
+                order by report_date desc, updated_at desc
+                limit 1
+                """
+            ).fetchone()
+            return dict(row) if row else None
+
+    def opening_radar_report(self, report_id: int) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                select *
+                from opening_radar_reports
+                where id = %s
+                """,
+                (report_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def opening_radar_reports(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                select id,
+                       report_date,
+                       session_label,
+                       snapshot->>'as_of' as as_of,
+                       provider,
+                       advice <> '{}'::jsonb as has_advice,
+                       created_at,
+                       updated_at
+                from opening_radar_reports
+                order by report_date desc, updated_at desc
+                limit %s
+                """,
+                (limit,),
+            ).fetchall()
+            return list(rows)
+
     def save_score(
         self,
         *,
@@ -580,6 +672,84 @@ class PostgresStore:
                 (ticker.upper(), limit),
             ).fetchall()
             return list(rows)
+
+    def save_future_event(
+        self,
+        *,
+        ticker: str,
+        title: str,
+        summary: str = "",
+        event_date: datetime | date | str | None = None,
+        window_label: str = "",
+        catalyst_type: str = "",
+        source_key: str = "",
+        source_url: str = "",
+        importance_score: float = 0,
+        confidence_score: float = 0,
+        status: str = "WATCH",
+        evidence: dict[str, Any] | None = None,
+    ) -> int:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                update future_events
+                set event_date = %s,
+                    window_label = %s,
+                    catalyst_type = %s,
+                    summary = %s,
+                    importance_score = %s,
+                    confidence_score = %s,
+                    status = %s,
+                    evidence = %s::jsonb,
+                    updated_at = now()
+                where ticker = %s
+                  and title = %s
+                  and source_key = %s
+                  and source_url = %s
+                returning id
+                """,
+                (
+                    event_date,
+                    window_label,
+                    catalyst_type,
+                    summary,
+                    importance_score,
+                    confidence_score,
+                    status,
+                    json_dumps(evidence or {}),
+                    ticker.upper(),
+                    title,
+                    source_key,
+                    source_url,
+                ),
+            ).fetchone()
+            if not row:
+                row = conn.execute(
+                    """
+                    insert into future_events (
+                        ticker, event_date, window_label, catalyst_type, title, summary,
+                        source_key, source_url, importance_score, confidence_score, status, evidence
+                    )
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                    returning id
+                    """,
+                    (
+                        ticker.upper(),
+                        event_date,
+                        window_label,
+                        catalyst_type,
+                        title,
+                        summary,
+                        source_key,
+                        source_url,
+                        importance_score,
+                        confidence_score,
+                        status,
+                        json_dumps(evidence or {}),
+                    ),
+                ).fetchone()
+            conn.commit()
+            return int(row["id"])
 
     def latest_ticker_run(self, ticker: str) -> dict[str, Any] | None:
         with self.connect() as conn:

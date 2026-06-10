@@ -133,3 +133,20 @@ create table if not exists future_events (
 
 create index if not exists idx_future_events_ticker_date
     on future_events (ticker, event_date asc nulls last, importance_score desc);
+
+create table if not exists opening_radar_reports (
+    id bigserial primary key,
+    report_date date not null,
+    session_label text not null default 'pre_open',
+    snapshot jsonb not null default '{}'::jsonb,
+    advice jsonb not null default '{}'::jsonb,
+    provider text not null default '',
+    prompt text not null default '',
+    raw_response text not null default '',
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    unique (report_date, session_label)
+);
+
+create index if not exists idx_opening_radar_reports_updated
+    on opening_radar_reports (updated_at desc);

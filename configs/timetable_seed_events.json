@@ -1,0 +1,52 @@
+{
+  "PL": [
+    {
+      "event_date": "2026-09-08",
+      "window_label": "Early September 2026 estimate",
+      "catalyst_type": "earnings",
+      "title": "Estimated fiscal Q2 2027 earnings window",
+      "summary": "Use as a placeholder until the official IR events page confirms the release date and webcast time.",
+      "source_key": "company_ir_calendar",
+      "source_url": "https://investors.planet.com/events-and-presentations/events/default.aspx",
+      "importance_score": 86,
+      "confidence_score": 42,
+      "status": "ESTIMATED",
+      "evidence": {
+        "basis": "Planet has typically reported fiscal Q2 results in early September after its July 31 quarter end.",
+        "confirm_with": "Planet IR events and press releases"
+      }
+    },
+    {
+      "event_date": "2026-10-15",
+      "window_label": "Mid October watch",
+      "catalyst_type": "investor_event",
+      "title": "Investor day or product/customer update watch",
+      "summary": "Track IR events and Planet Pulse for investor-day style updates, product launches, customer momentum, and guidance changes.",
+      "source_key": "company_official",
+      "source_url": "https://investors.planet.com/events-and-presentations/events/default.aspx",
+      "importance_score": 72,
+      "confidence_score": 35,
+      "status": "WATCH",
+      "evidence": {
+        "basis": "Planet hosted Investor Day 2025 in mid October; treat any future repeat as a catalyst watch, not a confirmed event.",
+        "confirm_with": "Planet IR events, IR news, and Planet Pulse"
+      }
+    },
+    {
+      "event_date": "2026-12-10",
+      "window_label": "Early December 2026 estimate",
+      "catalyst_type": "earnings",
+      "title": "Estimated fiscal Q3 2027 earnings window",
+      "summary": "Second high-priority earnings checkpoint after the October 31 quarter end; confirm once Planet posts the announcement.",
+      "source_key": "company_ir_calendar",
+      "source_url": "https://investors.planet.com/events-and-presentations/events/default.aspx",
+      "importance_score": 84,
+      "confidence_score": 40,
+      "status": "ESTIMATED",
+      "evidence": {
+        "basis": "Planet announced fiscal Q3 2026 results for December 10, 2025 after market close.",
+        "confirm_with": "Planet IR events and press releases"
+      }
+    }
+  ]
+}

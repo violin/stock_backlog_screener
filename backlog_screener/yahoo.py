@@ -4,11 +4,13 @@ import json
 import math
 import sys
 import time
+from datetime import date, datetime
 from dataclasses import asdict
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence
 
 import pandas as pd
+import requests
 
 from .config import DEFAULT_EXCHANGES, ScreenThresholds
 from .models import CandidateMetrics
@@ -18,7 +20,7 @@ def _to_float(value) -> Optional[float]:
     if value is None:
         return None
     if isinstance(value, str):
-        value = value.strip().replace(",", "").replace("%", "")
+        value = value.strip().replace(",", "").replace("%", "").replace("$", "")
         if not value or value.lower() in {"nan", "none", "n/a", "--"}:
             return None
     try:
@@ -191,6 +193,69 @@ def fetch_price_trend(symbol: str, *, period: str = "max", max_points: int = 420
     }
 
 
+def fetch_nasdaq_price_trend(
+    symbol: str,
+    *,
+    max_points: int = 420,
+    from_date: str = "1990-01-01",
+    to_date: str | None = None,
+) -> dict:
+    clean_symbol = symbol.strip().upper()
+    params = {
+        "assetclass": "stocks",
+        "fromdate": from_date,
+        "todate": to_date or date.today().isoformat(),
+        "limit": "9999",
+    }
+    response = requests.get(
+        f"https://api.nasdaq.com/api/quote/{clean_symbol}/historical",
+        params=params,
+        headers={
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json, text/plain, */*",
+        },
+        timeout=15,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    rows = (((payload.get("data") or {}).get("tradesTable") or {}).get("rows") or [])
+    points = []
+    for row in rows:
+        close = _to_float(row.get("close"))
+        if close is None:
+            continue
+        parsed_date = _parse_nasdaq_date(row.get("date"))
+        if parsed_date is None:
+            continue
+        points.append({"date": parsed_date.isoformat(), "close": close})
+    points.sort(key=lambda item: item["date"])
+    points = _sample_points(points, max_points=max_points)
+    closes = [point["close"] for point in points]
+    first = points[0] if points else None
+    latest = points[-1] if points else None
+    first_close = first["close"] if first else None
+    latest_close = latest["close"] if latest else None
+    total_return = None
+    if first_close not in (None, 0) and latest_close is not None:
+        total_return = (latest_close - first_close) / abs(first_close)
+    return {
+        "ticker": clean_symbol,
+        "source": "nasdaq",
+        "source_label": "Nasdaq daily close",
+        "period": "max",
+        "points": points,
+        "point_count": len(points),
+        "first_date": first["date"] if first else None,
+        "latest_date": latest["date"] if latest else None,
+        "first_close": first_close,
+        "latest_close": latest_close,
+        "min_close": min(closes) if closes else None,
+        "max_close": max(closes) if closes else None,
+        "total_return": total_return,
+        "query_window": {"from": from_date, "to": params["todate"]},
+    }
+
+
 def _fetch_live_candidate_metrics(symbol: str) -> CandidateMetrics:
     import yfinance as yf
 
@@ -259,6 +324,13 @@ def _sample_points(points: list[dict], *, max_points: int) -> list[dict]:
         seen.add(source_index)
         sampled.append(points[source_index])
     return sampled
+
+
+def _parse_nasdaq_date(value) -> date | None:
+    try:
+        return datetime.strptime(str(value), "%m/%d/%Y").date()
+    except (TypeError, ValueError):
+        return None
 
 
 def _cache_path(cache_dir: Optional[Path], symbol: str) -> Optional[Path]:

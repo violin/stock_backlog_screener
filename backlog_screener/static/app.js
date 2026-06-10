@@ -8,6 +8,11 @@ let sectorsLoaded = false;
 let datasourcesLoaded = false;
 let activeWorkspaceView = "research";
 let latestWatchlist = new Set();
+let tradingViewLoadedTicker = null;
+let openingRadarLoaded = false;
+let openingRadarSnapshot = null;
+let openingRadarReportId = null;
+let activeSectorRadar = "space";
 
 const TICKER_STORAGE_KEY = "codeBeta.tickers";
 const LEGACY_TICKER_STORAGE_KEY = "hiddenChampionScreener.tickers";
@@ -17,6 +22,7 @@ const els = {
   openScreeningButton: document.querySelector("#openScreeningButton"),
   navPoolsButton: document.querySelector("#navPoolsButton"),
   navDetailsButton: document.querySelector("#navDetailsButton"),
+  navOpeningRadarButton: document.querySelector("#navOpeningRadarButton"),
   navDataSourcesButton: document.querySelector("#navDataSourcesButton"),
   openRunsButton: document.querySelector("#openRunsButton"),
   globalSearch: document.querySelector("#globalSearch"),
@@ -25,10 +31,19 @@ const els = {
   screenMode: document.querySelector("#screenMode"),
   screenCondition: document.querySelector("#screenCondition"),
   useFutuScreen: document.querySelector("#useFutuScreen"),
-  useTradingView: document.querySelector("#useTradingView"),
   useSec: document.querySelector("#useSec"),
   researchGrid: document.querySelector("#researchGrid"),
   datasourcePage: document.querySelector("#datasourcePage"),
+  openingRadarPage: document.querySelector("#openingRadarPage"),
+  openingRadarAsOf: document.querySelector("#openingRadarAsOf"),
+  refreshOpeningRadarButton: document.querySelector("#refreshOpeningRadarButton"),
+  generateOpeningAdviceButton: document.querySelector("#generateOpeningAdviceButton"),
+  openingRadarPrimary: document.querySelector("#openingRadarPrimary"),
+  sectorRadarTabs: document.querySelector("#sectorRadarTabs"),
+  sectorRadarPanel: document.querySelector("#sectorRadarPanel"),
+  openingAdviceMeta: document.querySelector("#openingAdviceMeta"),
+  openingReportHistory: document.querySelector("#openingReportHistory"),
+  openingAdviceBody: document.querySelector("#openingAdviceBody"),
   datasourceSummary: document.querySelector("#datasourceSummary"),
   datasourceList: document.querySelector("#datasourceList"),
   candidatePoolList: document.querySelector("#candidatePoolList"),
@@ -43,9 +58,13 @@ const els = {
   summaryTab: document.querySelector("#summaryTab"),
   truthTab: document.querySelector("#truthTab"),
   timetableTab: document.querySelector("#timetableTab"),
+  chartTab: document.querySelector("#chartTab"),
   summaryPanel: document.querySelector("#summaryPanel"),
   truthPanel: document.querySelector("#truthPanel"),
   timetablePanel: document.querySelector("#timetablePanel"),
+  chartPanel: document.querySelector("#chartPanel"),
+  tradingViewWidget: document.querySelector("#tradingViewWidget"),
+  tradingViewLink: document.querySelector("#tradingViewLink"),
   summaryMeta: document.querySelector("#summaryMeta"),
   summaryBody: document.querySelector("#summaryBody"),
   summaryButton: document.querySelector("#summaryButton"),
@@ -56,6 +75,8 @@ const els = {
   missingData: document.querySelector("#missingData"),
   scoreBreakdown: document.querySelector("#scoreBreakdown"),
   timeline: document.querySelector("#timeline"),
+  timetableStatus: document.querySelector("#timetableStatus"),
+  refreshTimetableButton: document.querySelector("#refreshTimetableButton"),
   futureTimeline: document.querySelector("#futureTimeline"),
   workerState: document.querySelector("#workerState"),
   latestRun: document.querySelector("#latestRun"),
@@ -84,6 +105,9 @@ const els = {
   useYfinance: document.querySelector("#useYfinance"),
   use13f: document.querySelector("#use13f"),
   useUsaspending: document.querySelector("#useUsaspending"),
+  useLaunchLibrary: document.querySelector("#useLaunchLibrary"),
+  useCompanyOfficial: document.querySelector("#useCompanyOfficial"),
+  useOpenInsider: document.querySelector("#useOpenInsider"),
   useMinimax: document.querySelector("#useMinimax"),
   runButton: document.querySelector("#runButton"),
   refreshButton: document.querySelector("#refreshButton"),
@@ -171,13 +195,247 @@ async function refreshWatchlist() {
 async function showWorkspaceView(view) {
   activeWorkspaceView = view;
   const datasourceView = view === "datasources";
-  els.researchGrid.hidden = datasourceView;
+  const openingRadarView = view === "opening-radar";
+  els.researchGrid.hidden = datasourceView || openingRadarView;
   els.datasourcePage.hidden = !datasourceView;
+  els.openingRadarPage.hidden = !openingRadarView;
   els.openScreeningButton.classList.toggle("active", view === "screening");
+  els.navOpeningRadarButton.classList.toggle("active", openingRadarView);
   els.navPoolsButton.classList.toggle("active", view === "research");
   els.navDetailsButton.classList.toggle("active", view === "details");
   els.navDataSourcesButton.classList.toggle("active", datasourceView);
   if (datasourceView) await loadDataSources();
+  if (openingRadarView) await loadOpeningRadar();
+}
+
+async function loadOpeningRadar({force = false} = {}) {
+  if (openingRadarLoaded && !force) return;
+  els.openingRadarPrimary.innerHTML = `<div class="empty">Loading Nasdaq indicators</div>`;
+  els.sectorRadarPanel.innerHTML = `<div class="empty">Loading sector indicators</div>`;
+  try {
+    const path = force ? "/api/opening-radar?force=1" : "/api/opening-radar";
+    const data = await api(path);
+    openingRadarSnapshot = data;
+    openingRadarReportId = data.report?.id || null;
+    openingRadarLoaded = true;
+    renderOpeningRadar(data);
+  } catch (error) {
+    els.openingRadarPrimary.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+    els.sectorRadarPanel.innerHTML = "";
+  }
+}
+
+function renderOpeningRadar(data) {
+  const report = data.report || {};
+  els.openingRadarAsOf.textContent = report.report_date
+    ? `Report ${report.report_date} · Updated ${formatShortTime(report.updated_at || data.as_of)}`
+    : data.as_of
+      ? `Updated ${formatShortTime(data.as_of)}`
+      : "-";
+  els.openingRadarPrimary.innerHTML = "";
+  els.openingRadarPrimary.appendChild(renderRadarCard(data.primary, {fixed: true}));
+  renderOpeningReportHistory(data.history || [], report.id);
+  renderSectorRadarTabs(data.sectors || []);
+  const active = (data.sectors || []).find((item) => item.key === activeSectorRadar) || (data.sectors || [])[0];
+  els.sectorRadarPanel.innerHTML = "";
+  if (active) {
+    activeSectorRadar = active.key;
+    els.sectorRadarPanel.appendChild(renderRadarCard(active));
+  } else {
+    els.sectorRadarPanel.innerHTML = `<div class="empty">No sector radar configured</div>`;
+  }
+  if (data.advice) {
+    renderOpeningAdvice(data.advice_provider || report.provider, data.advice);
+  } else {
+    els.openingAdviceMeta.textContent = "Persisted after trigger";
+    els.openingAdviceBody.innerHTML = `<div class="empty">No AI Prep saved for this report.</div>`;
+  }
+}
+
+function renderOpeningReportHistory(history, activeId) {
+  els.openingReportHistory.innerHTML = "";
+  if (!history.length) {
+    els.openingReportHistory.innerHTML = `<div class="history-empty">No reports</div>`;
+    return;
+  }
+  for (const item of history) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `history-report-button${Number(item.id) === Number(activeId) ? " active" : ""}`;
+    button.innerHTML = `
+      <span>${escapeHtml(item.report_date || "-")}</span>
+      <b>${item.has_advice ? "AI" : "Facts"}</b>
+    `;
+    button.addEventListener("click", () => loadOpeningRadarReport(item.id));
+    els.openingReportHistory.appendChild(button);
+  }
+}
+
+async function loadOpeningRadarReport(reportId) {
+  els.openingRadarPrimary.innerHTML = `<div class="empty">Loading report</div>`;
+  try {
+    const data = await api(`/api/opening-radar/${reportId}`);
+    openingRadarSnapshot = data;
+    openingRadarReportId = data.report?.id || null;
+    openingRadarLoaded = true;
+    renderOpeningRadar(data);
+  } catch (error) {
+    els.openingRadarPrimary.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderSectorRadarTabs(sectors) {
+  els.sectorRadarTabs.innerHTML = "";
+  for (const sector of sectors) {
+    const button = document.createElement("button");
+    button.id = `sectorRadarTab-${sector.key}`;
+    button.className = `detail-tab${sector.key === activeSectorRadar ? " active" : ""}`;
+    button.type = "button";
+    button.textContent = `${sector.label || sector.key} · ${sector.symbol || ""}`;
+    button.addEventListener("click", () => {
+      activeSectorRadar = sector.key;
+      renderOpeningRadar(openingRadarSnapshot);
+    });
+    els.sectorRadarTabs.appendChild(button);
+  }
+}
+
+function renderRadarCard(item, {fixed = false} = {}) {
+  const article = document.createElement("article");
+  article.className = `radar-card${fixed ? " fixed" : ""}`;
+  if (!item || item.error) {
+    article.innerHTML = `
+      <div class="radar-card-head">
+        <div><strong>${escapeHtml(item?.label || "Radar")}</strong><span>${escapeHtml(item?.symbol || "-")}</span></div>
+        <mark>Data gap</mark>
+      </div>
+      <div class="empty">${escapeHtml(item?.error || "No radar data")}</div>
+    `;
+    return article;
+  }
+  const indicators = item.indicators || {};
+  const metrics = [
+    ["Regime", item.regime, item.directional_bias],
+    ["MACD", numberText(indicators.macd_hist), `prev ${numberText(indicators.macd_hist_prev)}`],
+    ["RSI", numberText(indicators.rsi14), rsiLabel(indicators.rsi14)],
+    ["KDJ", `${numberText(indicators.kdj_k)}/${numberText(indicators.kdj_d)}/${numberText(indicators.kdj_j)}`, kdjLabel(indicators)],
+    ["MA Stack", `${numberText(indicators.distance_ma20_pct)}%`, "vs MA20"],
+    ["ADX", numberText(indicators.adx14), adxLabel(indicators.adx14)],
+    ["ATR", `${numberText(indicators.atr14_pct)}%`, "14D range risk"],
+    ["Vol", volatilityText(item), "IV / realized"],
+  ];
+  article.innerHTML = `
+    <div class="radar-card-head">
+      <div>
+        <strong>${escapeHtml(item.label || item.key)}</strong>
+        <span>${escapeHtml(item.symbol || "")} · ${escapeHtml(item.latest_date || "")} · close ${numberText(item.latest_close)}</span>
+      </div>
+      <mark data-regime="${escapeAttribute(item.regime)}">${escapeHtml(item.regime || "Unknown")}</mark>
+    </div>
+    <div class="radar-metric-grid">
+      ${metrics
+        .map(
+          ([label, value, help]) => `
+            <div class="radar-metric">
+              <span>${escapeHtml(label)}</span>
+              <strong>${escapeHtml(value)}</strong>
+              <small>${escapeHtml(help || "")}</small>
+            </div>
+          `
+        )
+        .join("")}
+    </div>
+    <div class="radar-facts">
+      <strong>Facts</strong>
+      <ul>${(item.facts || []).map((fact) => `<li>${escapeHtml(fact)}</li>`).join("")}</ul>
+    </div>
+  `;
+  return article;
+}
+
+async function generateOpeningAdvice() {
+  els.generateOpeningAdviceButton.disabled = true;
+  els.generateOpeningAdviceButton.textContent = "Thinking";
+  els.openingAdviceMeta.textContent = "MiniMax running";
+  try {
+    if (!openingRadarSnapshot) await loadOpeningRadar({force: true});
+    const data = await api("/api/opening-radar/advice", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({report_id: openingRadarReportId}),
+    });
+    openingRadarSnapshot = data;
+    openingRadarReportId = data.report?.id || openingRadarReportId;
+    renderOpeningRadar(data);
+  } catch (error) {
+    els.openingAdviceBody.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+    els.openingAdviceMeta.textContent = "Failed";
+  } finally {
+    els.generateOpeningAdviceButton.disabled = false;
+  els.generateOpeningAdviceButton.textContent = "AI Prep";
+  }
+}
+
+function renderOpeningAdvice(provider, advice) {
+  els.openingAdviceMeta.textContent = `${escapeHtml(provider || advice.provider || "MiniMax")} · C ${Number(advice.confidence_score || 0).toFixed(0)}`;
+  els.openingAdviceBody.innerHTML = `
+    <section class="advice-block wide">
+      <h3>Market Call</h3>
+      <p>${escapeHtml(advice.market_call || advice.summary || "No market call returned.")}</p>
+    </section>
+    ${adviceList("Today Plan", advice.today_plan)}
+    ${adviceList("Risk Controls", advice.risk_controls)}
+    ${adviceList("Watch Levels", advice.watch_levels)}
+  `;
+}
+
+function adviceList(title, items) {
+  const safeItems = Array.isArray(items) ? items.filter(Boolean) : [];
+  return `
+    <section class="advice-block">
+      <h3>${escapeHtml(title)}</h3>
+      ${safeItems.length ? `<ul>${safeItems.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : `<p>No items.</p>`}
+    </section>
+  `;
+}
+
+function numberText(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  return Math.abs(number) >= 100 ? number.toFixed(0) : number.toFixed(2);
+}
+
+function rsiLabel(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  if (number >= 70) return "overbought";
+  if (number <= 30) return "oversold";
+  if (number >= 55) return "bullish zone";
+  if (number <= 45) return "weak zone";
+  return "neutral";
+}
+
+function kdjLabel(indicators) {
+  const k = Number(indicators.kdj_k);
+  const d = Number(indicators.kdj_d);
+  if (!Number.isFinite(k) || !Number.isFinite(d)) return "-";
+  if (k > 80) return "hot";
+  if (k < 20) return "cold";
+  return k > d ? "turning up" : "turning down";
+}
+
+function adxLabel(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  if (number >= 25) return "trend strong";
+  if (number < 18) return "range likely";
+  return "trend forming";
+}
+
+function volatilityText(item) {
+  const vol = item.volatility || {};
+  if (vol.latest) return `${numberText(vol.latest)} / ${numberText(item.indicators?.realized_vol_20d)}%`;
+  return `${numberText(item.indicators?.realized_vol_20d)}%`;
 }
 
 async function loadDataSources({force = false} = {}) {
@@ -258,7 +516,7 @@ function renderDataSourceCard(source) {
     <div class="datasource-purpose">
       <b>Purpose</b>
       <span>${escapeHtml(source.purpose_en || "-")}</span>
-      ${longTextSupplement(source.purpose_en, source.purpose_zh)}
+      ${textSupplement(source.purpose_zh)}
     </div>
     <div class="datasource-meta-grid">
       <span><b>Provider</b>${escapeHtml(source.provider || "-")}</span>
@@ -272,23 +530,16 @@ function renderDataSourceCard(source) {
     </div>
     ${dimensions.length ? `<div class="datasource-chip-row">${dimensions.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
     ${scopeDetail(keywords, tickers)}
-    <div class="datasource-detail-line"><b>Limits</b><span>${escapeHtml(source.rate_limit_summary || "-")}</span>${longTextSupplement(source.rate_limit_summary, source.rate_limit_summary_zh)}</div>
-    <div class="datasource-detail-line"><b>Cache</b><span>${escapeHtml(source.cache_policy || "-")}</span>${longTextSupplement(source.cache_policy, source.cache_policy_zh)}</div>
+    <div class="datasource-detail-line"><b>Limits</b><span>${escapeHtml(source.rate_limit_summary || "-")}</span>${textSupplement(source.rate_limit_summary_zh)}</div>
+    <div class="datasource-detail-line"><b>Cache</b><span>${escapeHtml(source.cache_policy || "-")}</span>${textSupplement(source.cache_policy_zh)}</div>
     ${notes.length ? `<p class="datasource-note">${escapeHtml(notes.join(" "))}</p>` : ""}
   `;
   return article;
 }
 
-function longTextSupplement(text, supplement) {
-  if (!supplement || wordCount(text) <= 10) return "";
+function textSupplement(supplement) {
+  if (!supplement) return "";
   return `<small>${escapeHtml(supplement)}</small>`;
-}
-
-function wordCount(text) {
-  return String(text || "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean).length;
 }
 
 function scopeDetail(keywords, tickers) {
@@ -415,6 +666,7 @@ function renderRunCard(run, {compact}) {
   const percent = Number(run.progress?.percent || 0);
   const errorCount = Number(run.progress?.error_observations || 0);
   const dims = run.dimensions || [];
+  const sources = run.sources || [];
   const tickers = run.tickers || [];
   const config = run.config || {};
   article.innerHTML = `
@@ -431,6 +683,7 @@ function renderRunCard(run, {compact}) {
     </div>
     <div class="progress-bar"><span style="width:${Math.min(percent, 100)}%"></span></div>
     ${compact ? "" : runStats(run)}
+    ${sourceChips(compact ? sources.slice(0, 5) : sources)}
     ${dimensionChips(compact ? dims.slice(0, 6) : dims)}
     ${compact ? "" : tickerPreview(tickers, run.total)}
     ${run.error_message ? `<p class="run-error">${escapeHtml(run.error_message).slice(0, 220)}</p>` : ""}
@@ -450,6 +703,26 @@ function runStats(run) {
   `;
 }
 
+function sourceChips(sources) {
+  if (!sources.length) return "";
+  return `
+    <div class="source-chips" aria-label="Requested datasources">
+      ${sources
+        .map((item) => {
+          const total = Number(item.total || 0);
+          const count = Number(item.ticker_count || 0);
+          const scoped = ["sector", "ticker"].includes(String(item.collection_scope || ""));
+          const state = count ? "done" : scoped ? "scoped" : "empty";
+          const label = sourceShortLabel(item.source_name || item.source_key);
+          const countText = scoped ? String(count) : `${count}/${total}`;
+          const title = `${item.source_key} · ${scopeLabel(item.collection_scope)} · ${Number(item.observation_count || 0)} observations`;
+          return `<span data-state="${state}" title="${escapeHtml(title)}">${escapeHtml(label)} <b>${escapeHtml(countText)}</b></span>`;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
 function dimensionChips(dimensions) {
   if (!dimensions.length) return "";
   return `
@@ -464,6 +737,15 @@ function dimensionChips(dimensions) {
         .join("")}
     </div>
   `;
+}
+
+function sourceShortLabel(value) {
+  return String(value || "")
+    .replace("Yahoo Finance via ", "")
+    .replace("SEC DEF 14A / 10-K Ownership Tables", "SEC Ownership")
+    .replace("SEC Schedule 13D/G", "SEC 13D/G")
+    .replace("Company Official Sources", "Official")
+    .replace("USAspending.gov", "USAspending");
 }
 
 function tickerPreview(tickers, total) {
@@ -532,7 +814,7 @@ function filterGroupsByPool(groups, poolKey) {
 }
 
 function candidatePoolCounts(candidates) {
-  const counts = {all: candidates.length, futu: 0, tradingview: 0, watched: 0};
+  const counts = {all: candidates.length, futu: 0, watched: 0};
   for (const item of candidates) {
     for (const key of candidatePoolKeys(item)) {
       if (key in counts) counts[key] += 1;
@@ -545,7 +827,6 @@ function renderCandidatePools(counts) {
   const pools = [
     {key: "all", label: "All"},
     {key: "futu", label: "Futu Screen"},
-    {key: "tradingview", label: "TradingView"},
     {key: "watched", label: "Watchlist"},
   ];
   els.candidatePoolList.innerHTML = "";
@@ -553,7 +834,7 @@ function renderCandidatePools(counts) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `candidate-pool-button${activePool === pool.key ? " active" : ""}`;
-    button.innerHTML = `${escapeHtml(pool.label)} <b>${Number(counts[pool.key] || 0)}</b>`;
+    button.innerHTML = `<span>${escapeHtml(pool.label)}</span><b>${Number(counts[pool.key] || 0)}</b>`;
     button.addEventListener("click", async () => {
       activePool = pool.key;
       await refreshAll();
@@ -565,7 +846,6 @@ function renderCandidatePools(counts) {
 function candidatePoolKeys(item) {
   const keys = ["scored"];
   if (item.futu_code || item.sector || item.industry || item.sector_group) keys.push("futu");
-  if (Array.isArray(item.screen_sources) && item.screen_sources.includes("tradingview")) keys.push("tradingview");
   if (latestWatchlist.has(tickerKey(item))) keys.push("watched");
   return keys;
 }
@@ -630,7 +910,6 @@ function candidateMembershipMarkup(item) {
   const chips = [];
   const keys = candidatePoolKeys(item);
   if (keys.includes("futu")) chips.push({source: "futu", label: "Futu"});
-  if (keys.includes("tradingview")) chips.push({source: "tradingview", label: "TV"});
   if (keys.includes("watched")) chips.push({source: "watched", label: "Watch"});
   chips.push({source: "scored", label: "Scored"});
   return `
@@ -657,6 +936,7 @@ async function loadTicker(ticker) {
   if (requestedTicker !== selectedTicker) return;
   els.detailTitle.textContent = requestedTicker;
   els.detailScore.textContent = data.score ? `${Number(data.score.total_score).toFixed(1)} · ${data.score.grade}` : "-";
+  if (activeDetailTab === "chart") renderTradingViewChart(requestedTicker);
   renderLastRun(data.last_run);
   renderScore(data.score);
   renderMissing(data.score);
@@ -669,20 +949,24 @@ function clearTickerDetail() {
   els.detailScore.textContent = "-";
   els.detailLastRun.textContent = "Last trigger -";
   els.rerunTickerButton.disabled = true;
+  els.refreshTimetableButton.disabled = true;
   setWatchState(false);
-  els.summaryMeta.textContent = "MiniMax prompt summary";
+  els.summaryMeta.textContent = "LLM prompt summary";
   els.summaryBody.innerHTML = `<div class="empty">No summary yet</div>`;
   els.summaryButton.disabled = false;
-  els.summaryButton.textContent = "AI Draft";
+  els.summaryButton.textContent = "Regenerate";
   els.missingData.innerHTML = "";
   els.scoreBreakdown.innerHTML = "";
   els.timeline.innerHTML = `<div class="empty">No truth items</div>`;
+  els.timetableStatus.textContent = "Official and configured event sources";
   els.futureTimeline.innerHTML = `<div class="empty">No timetable items</div>`;
   renderTrend(null);
+  renderTradingViewChart(null);
 }
 
 function renderLastRun(run) {
   els.rerunTickerButton.disabled = !selectedTicker;
+  els.refreshTimetableButton.disabled = !selectedTicker;
   if (!run) {
     els.detailLastRun.textContent = "Last trigger -";
     return;
@@ -699,6 +983,7 @@ function setDetailTab(tab) {
     ["summary", els.summaryTab, els.summaryPanel],
     ["truth", els.truthTab, els.truthPanel],
     ["timetable", els.timetableTab, els.timetablePanel],
+    ["chart", els.chartTab, els.chartPanel],
   ];
   for (const [key, tabButton, panel] of entries) {
     tabButton.classList.toggle("active", key === tab);
@@ -708,6 +993,130 @@ function setDetailTab(tab) {
   els.dimensionFilter.disabled = !truthActive;
   els.dimensionFilter.closest("label")?.classList.toggle("is-disabled", !truthActive);
   if (tab === "timetable" && selectedTicker) loadTickerFuture(selectedTicker);
+  if (tab === "chart") renderTradingViewChart(selectedTicker);
+}
+
+function renderTradingViewChart(ticker) {
+  if (!ticker) {
+    tradingViewLoadedTicker = null;
+    els.tradingViewWidget.classList.remove("is-ready", "is-error");
+    els.tradingViewLink.href = "https://www.tradingview.com/";
+    els.tradingViewLink.textContent = "Open TradingView";
+    els.tradingViewWidget.innerHTML = `<div class="empty">Select a ticker</div>`;
+    return;
+  }
+  const cleanTicker = ticker.toUpperCase();
+  const symbol = tradingViewSymbol(cleanTicker);
+  const chartUrl = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(symbol)}`;
+  els.tradingViewLink.href = chartUrl;
+  els.tradingViewLink.textContent = `Open ${cleanTicker}`;
+  if (tradingViewLoadedTicker === cleanTicker && !els.tradingViewWidget.classList.contains("is-error")) return;
+  tradingViewLoadedTicker = cleanTicker;
+  els.tradingViewWidget.classList.remove("is-ready", "is-error");
+  els.tradingViewWidget.innerHTML = `
+    <div class="tradingview-loading">
+      <strong>Loading chart</strong>
+      <span>Checking TradingView widget access</span>
+    </div>
+    <div class="tradingview-error">
+      <strong>Embedded chart unavailable</strong>
+      <span>The TradingView widget domain cannot be reached from this browser/network. The full TradingView page can still open normally.</span>
+      <a href="${escapeHtml(chartUrl)}" target="_blank" rel="noreferrer">Open ${escapeHtml(cleanTicker)}</a>
+    </div>
+    <div class="tradingview-widget-container__widget"></div>
+  `;
+  ensureTradingViewWidgetAccess(cleanTicker).then((reachable) => {
+    if (tradingViewLoadedTicker !== cleanTicker) return;
+    if (!reachable) {
+      showTradingViewError(cleanTicker);
+      return;
+    }
+    injectTradingViewWidget(symbol, cleanTicker);
+  });
+}
+
+function injectTradingViewWidget(symbol, ticker) {
+  const widget = els.tradingViewWidget.querySelector(".tradingview-widget-container__widget");
+  if (!widget) return;
+  const script = document.createElement("script");
+  script.type = "text/javascript";
+  script.async = true;
+  script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
+  script.onerror = () => {
+    if (tradingViewLoadedTicker === ticker) showTradingViewError(ticker);
+  };
+  script.textContent = JSON.stringify({
+    autosize: true,
+    symbol,
+    interval: "D",
+    timezone: "America/New_York",
+    theme: "dark",
+    style: "1",
+    locale: "en",
+    allow_symbol_change: true,
+    save_image: false,
+    calendar: false,
+    hide_volume: false,
+    support_host: "https://www.tradingview.com",
+  });
+  widget.appendChild(script);
+  watchTradingViewFrame(ticker);
+}
+
+function tradingViewSymbol(ticker) {
+  return String(ticker || "").trim().toUpperCase().replace(/[^A-Z0-9._-]/g, "");
+}
+
+async function ensureTradingViewWidgetAccess(ticker) {
+  if (navigator.webdriver === true) return false;
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 4500);
+  try {
+    await fetch("https://www.tradingview-widget.com/embed-widget/advanced-chart/", {
+      mode: "no-cors",
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    return true;
+  } catch (error) {
+    console.info(`TradingView embedded widget unavailable for ${ticker}: ${error.message}`);
+    return false;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+function watchTradingViewFrame(ticker) {
+  const container = els.tradingViewWidget;
+  let fallbackTimer = null;
+  const markReady = () => {
+    if (tradingViewLoadedTicker !== ticker || container.classList.contains("is-error")) return;
+    window.clearTimeout(fallbackTimer);
+    container.classList.add("is-ready");
+  };
+  const attach = () => {
+    const iframe = container.querySelector("iframe");
+    if (!iframe) return false;
+    iframe.addEventListener("load", markReady, {once: true});
+    fallbackTimer = window.setTimeout(() => {
+      if (tradingViewLoadedTicker === ticker && !container.classList.contains("is-ready")) {
+        showTradingViewError(ticker);
+      }
+    }, 9000);
+    return true;
+  };
+  if (attach()) return;
+  const observer = new MutationObserver(() => {
+    if (attach()) observer.disconnect();
+  });
+  observer.observe(container, {childList: true, subtree: true});
+  window.setTimeout(() => observer.disconnect(), 8000);
+}
+
+function showTradingViewError(ticker) {
+  if (tradingViewLoadedTicker !== ticker) return;
+  els.tradingViewWidget.classList.remove("is-ready");
+  els.tradingViewWidget.classList.add("is-error");
 }
 
 function renderScore(score) {
@@ -749,9 +1158,9 @@ function renderMissing(score) {
 }
 
 async function loadCompanySummary(ticker) {
-  els.summaryMeta.textContent = "MiniMax prompt summary";
+  els.summaryMeta.textContent = "LLM prompt summary";
   els.summaryButton.disabled = false;
-  els.summaryButton.textContent = "AI Draft";
+  els.summaryButton.textContent = "Regenerate";
   els.summaryBody.innerHTML = `<div class="empty">Loading summary</div>`;
   try {
     const data = await api(`/api/ticker/${ticker}/summary`);
@@ -765,12 +1174,12 @@ async function loadCompanySummary(ticker) {
 function renderCompanySummary(summary) {
   if (!summary) {
     els.summaryMeta.textContent = "Not generated";
-    els.summaryButton.textContent = "AI Draft";
-    els.summaryBody.innerHTML = `<div class="empty">Generate a MiniMax summary from collected evidence.</div>`;
+    els.summaryButton.textContent = "Regenerate";
+    els.summaryBody.innerHTML = `<div class="empty">Generate an LLM summary from collected evidence.</div>`;
     return;
   }
   els.summaryMeta.textContent = `${escapeHtml(summary.provider || "minimax")} · ${escapeHtml((summary.created_at || "").slice(0, 10))} · C ${Number(summary.confidence_score || 0).toFixed(0)}`;
-  els.summaryButton.textContent = "AI Rewrite";
+  els.summaryButton.textContent = "Regenerate";
   els.summaryBody.innerHTML = `
     <div class="summary-section summary-wide">
       <h4>Business</h4>
@@ -834,36 +1243,89 @@ function renderTimeline(items) {
 
 async function loadTickerFuture(ticker) {
   try {
+    els.timetableStatus.textContent = "Loading timetable";
     const data = await api(`/api/ticker/${ticker}/future`);
     if (ticker !== selectedTicker) return;
     setWatchState(Boolean(data.watched));
     renderFutureEvents(data.events || []);
   } catch (error) {
+    els.timetableStatus.textContent = "Timetable unavailable";
     els.futureTimeline.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
   }
 }
 
 function renderFutureEvents(events) {
   els.futureTimeline.innerHTML = "";
+  els.timetableStatus.textContent = `${events.length} upcoming event${events.length === 1 ? "" : "s"}`;
   if (!events.length) {
     els.futureTimeline.innerHTML = `<div class="empty">No timetable items</div>`;
     return;
   }
+  let lastDate = "";
   for (const event of events) {
     const article = document.createElement("article");
     article.className = "future-event";
+    const dateLabel = event.event_date || event.window_label || "TBD";
+    const isNewDate = dateLabel !== lastDate;
+    lastDate = dateLabel;
     article.innerHTML = `
-      <div class="event-meta">
-        <span>${escapeHtml(event.event_date || event.window_label || "TBD")}</span>
-        <span>${escapeHtml(event.catalyst_type || "event")}</span>
-        <span>${escapeHtml(event.status || "WATCH")}</span>
-        <span>I ${Number(event.importance_score || 0).toFixed(0)}</span>
+      <div class="event-date ${isNewDate ? "" : "muted-date"}">
+        <strong>${escapeHtml(dateLabel)}</strong>
+        ${event.window_label && event.window_label !== event.event_date ? `<span>${escapeHtml(event.window_label)}</span>` : ""}
       </div>
-      <h3>${escapeHtml(event.title || "Untitled event")}</h3>
-      <p>${escapeHtml(event.summary || "")}</p>
-      ${event.source_url ? `<p class="excerpt">${escapeHtml(event.source_key || "source")} · ${escapeHtml(event.source_url)}</p>` : ""}
+      <div class="event-body">
+        <div class="event-meta">
+          <span>${escapeHtml(event.catalyst_type || "event")}</span>
+          <span>${escapeHtml(event.status || "WATCH")}</span>
+          <span>I ${Number(event.importance_score || 0).toFixed(0)}</span>
+          ${event.configured ? `<span>configured</span>` : ""}
+        </div>
+        <h3>${escapeHtml(event.title || "Untitled event")}</h3>
+        <p>${escapeHtml(event.summary || "")}</p>
+        ${event.source_url ? `<a class="event-source" href="${escapeAttribute(event.source_url)}" target="_blank" rel="noreferrer">${escapeHtml(event.source_key || "source")}</a>` : ""}
+      </div>
     `;
     els.futureTimeline.appendChild(article);
+  }
+}
+
+async function refreshTimetableSources() {
+  if (!selectedTicker) return;
+  const ticker = selectedTicker;
+  els.refreshTimetableButton.disabled = true;
+  els.refreshTimetableButton.textContent = "Refreshing";
+  els.timetableStatus.textContent = "Starting official event-source run";
+  try {
+    await api("/api/run", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        tickers: ticker,
+        screen_mode: "tickers",
+        screen_condition: "",
+        screen_limit: 1,
+        use_futu: false,
+        use_sec: false,
+        use_yfinance: false,
+        use_13f: false,
+        use_usaspending: false,
+        use_launch_library: true,
+        use_company_official: true,
+        use_openinsider: false,
+        summarize: false,
+        delay_seconds: 0.2,
+      }),
+    });
+    els.timetableStatus.textContent = "Event-source run started";
+    openQueueDrawer();
+    window.setTimeout(() => {
+      if (ticker === selectedTicker) loadTickerFuture(ticker);
+    }, 2200);
+  } catch (error) {
+    els.timetableStatus.textContent = error.message;
+  } finally {
+    els.refreshTimetableButton.disabled = !selectedTicker;
+    els.refreshTimetableButton.textContent = "Refresh Events";
   }
 }
 
@@ -925,7 +1387,7 @@ function renderTrend(trend) {
   els.trendReturn.textContent = returnText;
   els.trendReturn.title = "Total return from first weekly close to latest weekly close.";
   els.trendReturn.dataset.direction = Number.isFinite(totalReturn) && totalReturn < 0 ? "down" : "up";
-  els.trendRange.textContent = `${shortYear(firstDate)}-${shortYear(latestDate)} · ${trend.source_label || "Futu weekly close"}`;
+  els.trendRange.textContent = `${shortYear(firstDate)}-${shortYear(latestDate)}`;
   els.trendPrice.textContent = Number.isFinite(latestClose) ? `$${latestClose.toFixed(latestClose >= 100 ? 0 : 2)}` : "-";
   els.trendChartBody.innerHTML = `
     <svg class="trend-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-label="Lifetime close price trend">
@@ -935,7 +1397,6 @@ function renderTrend(trend) {
           <stop offset="1" stop-color="#4fd1c5" />
         </linearGradient>
       </defs>
-      <line class="trend-grid-line" x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" />
       <polyline class="trend-line" points="${path}" />
     </svg>
   `;
@@ -959,7 +1420,10 @@ function shortTrendError(message) {
 function setWatchState(watched) {
   selectedTickerWatched = watched;
   els.detailWatchButton.dataset.watched = watched ? "true" : "false";
-  els.detailWatchButton.textContent = watched ? "Watched" : "Watch";
+  const label = watched ? "Remove from watchlist" : "Add to watchlist";
+  els.detailWatchButton.setAttribute("aria-label", label);
+  els.detailWatchButton.title = label;
+  els.detailWatchButton.textContent = "";
 }
 
 async function toggleWatch() {
@@ -989,7 +1453,7 @@ async function rerunTicker() {
   if (!selectedTicker) return;
   const ticker = selectedTicker;
   els.rerunTickerButton.disabled = true;
-  els.rerunTickerButton.textContent = "Updating";
+  els.rerunTickerButton.textContent = "Refetching";
   try {
     await api("/api/run", {
       method: "POST",
@@ -999,12 +1463,14 @@ async function rerunTicker() {
         screen_mode: "tickers",
         screen_condition: "",
         screen_limit: 1,
-        use_futu: els.useFutuScreen.checked,
-        use_tradingview: els.useTradingView.checked,
-        use_sec: els.useSec.checked,
+        use_futu: true,
+        use_sec: true,
         use_yfinance: els.useYfinance.checked,
         use_13f: els.use13f.checked,
         use_usaspending: els.useUsaspending.checked,
+        use_launch_library: false,
+        use_company_official: false,
+        use_openinsider: els.useOpenInsider.checked,
         summarize: els.useMinimax.checked,
         delay_seconds: 1.0,
       }),
@@ -1015,7 +1481,7 @@ async function rerunTicker() {
     alert(error.message);
   } finally {
     els.rerunTickerButton.disabled = false;
-    els.rerunTickerButton.textContent = "Update";
+    els.rerunTickerButton.textContent = "Refetch Truth";
   }
 }
 
@@ -1032,11 +1498,13 @@ async function startRun() {
         screen_condition: els.screenCondition.value,
         screen_limit: 50,
         use_futu: els.useFutuScreen.checked,
-        use_tradingview: els.useTradingView.checked,
         use_sec: els.useSec.checked,
         use_yfinance: els.useYfinance.checked,
         use_13f: els.use13f.checked,
         use_usaspending: els.useUsaspending.checked,
+        use_launch_library: els.useLaunchLibrary.checked,
+        use_company_official: els.useCompanyOfficial.checked,
+        use_openinsider: els.useOpenInsider.checked,
         summarize: els.useMinimax.checked,
         delay_seconds: 1.0,
       }),
@@ -1055,7 +1523,7 @@ async function generateSummary() {
   const ticker = selectedTicker;
   els.summaryButton.disabled = true;
   els.summaryButton.textContent = "Writing";
-  els.summaryMeta.textContent = "MiniMax is summarizing";
+  els.summaryMeta.textContent = "LLM is summarizing";
   try {
     const data = await api(`/api/ticker/${ticker}/summary`, {method: "POST"});
     if (ticker !== selectedTicker) return;
@@ -1066,7 +1534,7 @@ async function generateSummary() {
   } finally {
     els.summaryButton.disabled = false;
     if (ticker === selectedTicker && els.summaryButton.textContent === "Writing") {
-      els.summaryButton.textContent = "AI Draft";
+      els.summaryButton.textContent = "Regenerate";
     }
   }
 }
@@ -1078,6 +1546,10 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function escapeAttribute(value) {
+  return escapeHtml(value);
 }
 
 function tickerKey(item) {
@@ -1163,17 +1635,22 @@ els.navDetailsButton.addEventListener("click", async () => {
   await showWorkspaceView("details");
   focusPanel(".detail", els.rerunTickerButton);
 });
+els.navOpeningRadarButton.addEventListener("click", () => showWorkspaceView("opening-radar"));
 els.navDataSourcesButton.addEventListener("click", () => showWorkspaceView("datasources"));
 els.openRunsButton.addEventListener("click", openQueueDrawer);
 els.closeScreeningDialog.addEventListener("click", closeScreeningDialog);
 els.runButton.addEventListener("click", startRun);
 els.summaryButton.addEventListener("click", generateSummary);
 els.refreshButton.addEventListener("click", refreshAll);
+els.refreshOpeningRadarButton.addEventListener("click", () => loadOpeningRadar({force: true}));
+els.generateOpeningAdviceButton.addEventListener("click", generateOpeningAdvice);
 els.detailWatchButton.addEventListener("click", toggleWatch);
 els.rerunTickerButton.addEventListener("click", rerunTicker);
+els.refreshTimetableButton.addEventListener("click", refreshTimetableSources);
 els.summaryTab.addEventListener("click", () => setDetailTab("summary"));
 els.truthTab.addEventListener("click", () => setDetailTab("truth"));
 els.timetableTab.addEventListener("click", () => setDetailTab("timetable"));
+els.chartTab.addEventListener("click", () => setDetailTab("chart"));
 els.workerState.addEventListener("click", openQueueDrawer);
 els.latestRun.addEventListener("click", openQueueDrawer);
 els.queueClose.addEventListener("click", closeQueueDrawer);

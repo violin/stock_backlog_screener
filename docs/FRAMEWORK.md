@@ -36,8 +36,8 @@ security_scores
 ```text
 base       基础数据源，默认对所有 ticker 跑，例如 Futu OpenD、SEC filings/companyfacts/Form 4/ownership。
 optional   慢速或补充数据源，手动打开，例如 yFinance、SEC 13F、MiniMax；FMP、Fintel、Ortex、Finnhub、SEC-API.io 已作为 planned 候选源登记。
-sector     特定板块数据源，只对匹配 sector/industry/ticker 的公司跑，例如 USAspending；Launch Library、FCC、行业会议 agenda 已预留为 planned。
-ticker     单 ticker 官方来源，只在 company metadata 配置 official_sources 后跑，例如公司官网、IR 新闻、产品/发射日历。
+sector     特定板块数据源，只对匹配 sector/industry/ticker 的公司跑，例如 USAspending、Launch Library；FCC、行业会议 agenda 已预留为 planned。
+ticker     单 ticker 官方来源，只在显式开启且 company metadata/config 配置 official_sources 后跑，例如公司官网、IR 新闻、产品/发射日历。
 ```
 
 ```text
@@ -64,6 +64,9 @@ SEC 13F
 
 USAspending.gov
   可选免费官方联邦合同 API，用于 aerospace / defense / semiconductor materials / infrastructure / advanced manufacturing 等候选的政府订单和补贴型背书。只作为 order_quality 的加分证据，不把没有政府合同当作扣分项。
+
+The Space Devs Launch Library 2
+  可选免费公开 JSON API，用于 aerospace / defense / satellite 相关标的的未来发射窗口、发射商、火箭、任务状态和载荷/mission 关键词匹配。结果写入 future_events，用作催化剂日历，不直接替代人工确认。
 
 yFinance
   默认关闭，只作为免费 fallback，主要补机构/内部人持股字段。

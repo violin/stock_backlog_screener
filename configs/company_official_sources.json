@@ -1,0 +1,56 @@
+{
+  "PL": [
+    {
+      "label": "Planet investor relations",
+      "url": "https://investors.planet.com/",
+      "type": "investor_relations",
+      "source_key": "company_official"
+    },
+    {
+      "label": "Planet IR events",
+      "url": "https://investors.planet.com/events-and-presentations/events/default.aspx",
+      "type": "ir_events",
+      "source_key": "company_official"
+    },
+    {
+      "label": "Planet quarterly results",
+      "url": "https://investors.planet.com/financials/quarterly-results/default.aspx",
+      "type": "earnings_results",
+      "source_key": "company_official"
+    },
+    {
+      "label": "Planet IR news",
+      "url": "https://investors.planet.com/news/news-details/default.aspx",
+      "type": "ir_news",
+      "source_key": "company_official"
+    },
+    {
+      "label": "Planet Pulse",
+      "url": "https://www.planet.com/pulse/",
+      "type": "company_news",
+      "source_key": "company_official"
+    }
+  ],
+  "CRDO": [
+    {
+      "label": "Credo newsroom",
+      "url": "https://credosemi.com/newsroom/",
+      "type": "company_news",
+      "source_key": "company_official"
+    }
+  ],
+  "RDW": [
+    {
+      "label": "Redwire investor press releases",
+      "url": "https://ir.redwirespace.com/news-events/press-releases",
+      "type": "ir_news",
+      "source_key": "company_official"
+    },
+    {
+      "label": "Redwire newsroom",
+      "url": "https://rdw.com/newsroom/",
+      "type": "company_news",
+      "source_key": "company_official"
+    }
+  ]
+}

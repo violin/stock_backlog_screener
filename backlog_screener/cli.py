@@ -64,6 +64,9 @@ def main(argv=None) -> int:
             use_yfinance=args.yfinance,
             use_13f=args.sec_13f,
             use_usaspending=args.usaspending,
+            use_launch_library=args.launch_library,
+            use_company_official=args.company_official,
+            use_openinsider=args.openinsider,
             summarize=args.summarize,
             delay_seconds=args.delay,
         )
@@ -176,7 +179,10 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--yfinance", action="store_true", help="Use yFinance only as slow fallback for ownership fields.")
     ingest.add_argument("--sec-13f", action="store_true", help="Enable slow curated SEC 13F institutional holder scan.")
     ingest.add_argument("--usaspending", action="store_true", help="Enable USAspending federal contract award search.")
-    ingest.add_argument("--summarize", action="store_true", help="Use MiniMax when MINIMAX_API_KEY is configured.")
+    ingest.add_argument("--launch-library", action="store_true", help="Enable The Space Devs Launch Library upcoming launch scan.")
+    ingest.add_argument("--company-official", action="store_true", help="Enable configured company official-source checks.")
+    ingest.add_argument("--openinsider", action="store_true", help="Enable slow OpenInsider ticker screener classification.")
+    ingest.add_argument("--summarize", action="store_true", help="Use the configured LLM provider when its API key is configured.")
     ingest.add_argument("--delay", type=float, default=1.0, help="Seconds to sleep between low-frequency source calls.")
 
     serve = subparsers.add_parser("serve", help="Start the local interactive hidden-champion dashboard.")

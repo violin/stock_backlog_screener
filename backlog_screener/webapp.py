@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import json
 from datetime import date, datetime
 from decimal import Decimal
 import re
@@ -10,10 +11,13 @@ from flask import Flask, jsonify, render_template, request
 
 from .datasources import DATA_SOURCE_DEFINITIONS, source_is_requested
 from .db import PostgresStore
-from .futu_provider import FutuProvider
-from .llm import MiniMaxClient
+from .futu_provider import FutuProvider, futu_code
+from .llm import build_llm_client
+from .market_prep import ai_prompt, opening_radar_snapshot
 from .pipeline import HiddenChampionPipeline
 from .settings import AppSettings
+from .timetable import configured_timetable_events, merge_timetable_events
+from .yahoo import fetch_nasdaq_price_trend, fetch_price_trend
 
 
 def create_app(*, store: PostgresStore, settings: AppSettings) -> Flask:
@@ -77,6 +81,74 @@ def create_app(*, store: PostgresStore, settings: AppSettings) -> Flask:
             scope = row.get("collection_scope") or "optional"
             summary[scope] = summary.get(scope, 0) + 1
         return jsonify(_clean_json({"sources": rows, "summary": summary}))
+
+    @app.get("/api/opening-radar")
+    def opening_radar():
+        force = _truthy(request.args.get("force"))
+        report = None if force else store.latest_opening_radar_report()
+        if report is not None and report.get("report_date") != date.today():
+            report = None
+        if report is None:
+            snapshot = opening_radar_snapshot(history_fetcher=_futu_daily_history_fetcher(settings))
+            report = store.save_opening_radar_snapshot(
+                report_date=_snapshot_report_date(snapshot),
+                snapshot=snapshot,
+            )
+        return jsonify(_clean_json(_opening_radar_payload(report, store)))
+
+    @app.get("/api/opening-radar/<int:report_id>")
+    def opening_radar_report(report_id: int):
+        report = store.opening_radar_report(report_id)
+        if not report:
+            return jsonify({"error": "Opening Radar report not found."}), 404
+        return jsonify(_clean_json(_opening_radar_payload(report, store)))
+
+    @app.post("/api/opening-radar/advice")
+    def opening_radar_advice():
+        provider_label = _llm_provider_label(settings)
+        client = build_llm_client(settings)
+        if client is None:
+            return jsonify({"error": f"{provider_label} API key is not configured."}), 400
+        if not hasattr(client, "complete_json"):
+            return jsonify({"error": f"{provider_label} does not support opening-radar JSON advice yet."}), 400
+        payload = request.get_json(force=True, silent=True) or {}
+        report_id = payload.get("report_id")
+        report = store.opening_radar_report(int(report_id)) if report_id else store.latest_opening_radar_report()
+        if report is None:
+            snapshot = opening_radar_snapshot(history_fetcher=_futu_daily_history_fetcher(settings))
+            report = store.save_opening_radar_snapshot(
+                report_date=_snapshot_report_date(snapshot),
+                snapshot=snapshot,
+            )
+        snapshot = report.get("snapshot") or {}
+        prompt = ai_prompt(json.dumps(_clean_json(snapshot), ensure_ascii=False, indent=2))
+        system = (
+            "你是美股日线技术面交易顾问。你只基于输入事实，服务开盘前半小时的仓位和方向决策。"
+            "先判断市场状态，再给今天的可执行预案。只输出 JSON。"
+        )
+        try:
+            advice = client.complete_json(
+                system=system,
+                user=prompt,
+            )
+        except Exception as exc:
+            response = getattr(exc, "response", None)
+            if response is not None:
+                detail = _llm_error_detail(response, provider_label)
+                status_code = 429 if response.status_code == 429 else 502
+            else:
+                detail = f"{provider_label} opening-radar advice failed."
+                status_code = 502
+            return jsonify({"error": detail}), status_code
+        raw_response = str(advice.pop("raw_response", "") or "")
+        report = store.save_opening_radar_advice(
+            report_id=int(report["id"]),
+            advice=advice,
+            provider=provider_label,
+            prompt=prompt,
+            raw_response=raw_response,
+        )
+        return jsonify(_clean_json(_opening_radar_payload(report, store)))
 
     @app.get("/api/candidates/search")
     def search_candidates():
@@ -145,7 +217,9 @@ def create_app(*, store: PostgresStore, settings: AppSettings) -> Flask:
     def ticker_future(ticker: str):
         clean_ticker = ticker.upper()
         watched = store.watched_ticker(clean_ticker) is not None
-        events = store.future_events(clean_ticker)
+        stored_events = store.future_events(clean_ticker)
+        configured_events = configured_timetable_events(clean_ticker)
+        events = merge_timetable_events(stored_events, configured_events)
         return jsonify(
             _clean_json(
                 {
@@ -153,6 +227,7 @@ def create_app(*, store: PostgresStore, settings: AppSettings) -> Flask:
                     "watched": watched,
                     "events": events,
                     "horizon_months": 6,
+                    "configured_events": len(configured_events),
                 }
             )
         )
@@ -161,18 +236,22 @@ def create_app(*, store: PostgresStore, settings: AppSettings) -> Flask:
     def ticker_trend(ticker: str):
         clean_ticker = ticker.upper()
         max_points = max(50, min(800, int(request.args.get("max_points", 420))))
+        futu_error = ""
         try:
             with FutuProvider(host=settings.futu_host, port=settings.futu_port, market=settings.futu_market) as provider:
                 trend = provider.price_trend(clean_ticker, max_points=max_points)
         except Exception as exc:
+            futu_error = _short_trend_error(str(exc))
             trend = {
                 "ticker": clean_ticker,
                 "source": "futu_opend",
                 "source_label": "Futu weekly close",
                 "period": "max",
                 "points": [],
-                "error": _short_trend_error(str(exc)),
+                "error": futu_error,
             }
+        if not _trend_has_points(trend):
+            trend = _fallback_price_trend(clean_ticker, max_points=max_points, base_trend=trend, base_error=futu_error)
         return jsonify(_clean_json(trend))
 
     @app.get("/api/ticker/<ticker>/summary")
@@ -190,8 +269,10 @@ def create_app(*, store: PostgresStore, settings: AppSettings) -> Flask:
     @app.post("/api/ticker/<ticker>/summary")
     def generate_ticker_summary(ticker: str):
         clean_ticker = ticker.upper()
-        if not settings.minimax_api_key:
-            return jsonify({"error": "MiniMax API key is not configured."}), 400
+        provider_label = _llm_provider_label(settings)
+        client = build_llm_client(settings)
+        if client is None:
+            return jsonify({"error": f"{provider_label} API key is not configured."}), 400
         company = store.company(clean_ticker)
         if not company:
             store.upsert_company(clean_ticker)
@@ -205,14 +286,6 @@ def create_app(*, store: PostgresStore, settings: AppSettings) -> Flask:
         if not items and not score:
             return jsonify({"error": f"No evidence has been collected for {clean_ticker}."}), 404
 
-        client = MiniMaxClient(
-            api_key=settings.minimax_api_key,
-            base_url=settings.minimax_base_url,
-            model=settings.minimax_model,
-            api=settings.minimax_api,
-            retries=settings.minimax_retries,
-            retry_wait_seconds=settings.minimax_retry_wait_seconds,
-        )
         try:
             summary = client.summarize_company_profile(
                 ticker=clean_ticker,
@@ -223,7 +296,7 @@ def create_app(*, store: PostgresStore, settings: AppSettings) -> Flask:
         except Exception as exc:
             response = getattr(exc, "response", None)
             if response is not None:
-                detail = _llm_error_detail(response)
+                detail = _llm_error_detail(response, provider_label)
                 if response.status_code == 429:
                     status_code = 429
                 elif "insufficient balance" in detail.lower():
@@ -231,17 +304,18 @@ def create_app(*, store: PostgresStore, settings: AppSettings) -> Flask:
                 else:
                     status_code = 502
             else:
-                detail = "MiniMax summary failed."
+                detail = f"{provider_label} summary failed."
                 status_code = 502
             return jsonify({"error": detail}), status_code
 
+        source_key = _llm_source_key(summary.provider)
         observation_id = store.save_observation(
             run_id=None,
             ticker=clean_ticker,
-            source_key="minimax",
+            source_key=source_key,
             source_type="llm_summary",
             observation_type="company_summary",
-            title=f"{clean_ticker} MiniMax company summary",
+            title=f"{clean_ticker} {summary.provider} company summary",
             raw_json={
                 "summary": summary.to_dict(),
                 "input_item_count": len(items),
@@ -257,7 +331,7 @@ def create_app(*, store: PostgresStore, settings: AppSettings) -> Flask:
             dimension="company_summary",
             title=f"{clean_ticker} AI company summary",
             summary=_company_summary_text(summary.to_dict()),
-            source_key="minimax",
+            source_key=source_key,
             importance_score=78,
             quality_score=72,
             confidence_score=summary.confidence_score,
@@ -310,6 +384,9 @@ def create_app(*, store: PostgresStore, settings: AppSettings) -> Flask:
                     use_yfinance=bool(payload.get("use_yfinance", False)),
                     use_13f=bool(payload.get("use_13f", False)),
                     use_usaspending=bool(payload.get("use_usaspending", False)),
+                    use_launch_library=bool(payload.get("use_launch_library", False)),
+                    use_company_official=bool(payload.get("use_company_official", False)),
+                    use_openinsider=bool(payload.get("use_openinsider", False)),
                     summarize=bool(payload.get("summarize", False)),
                     delay_seconds=float(payload.get("delay_seconds", 1.0)),
                     run_context=screen_context,
@@ -360,8 +437,6 @@ def _screen_context(payload: dict[str, Any]) -> dict[str, Any]:
     sources = []
     if bool(payload.get("use_futu", True)):
         sources.append("futu_opend")
-    if bool(payload.get("use_tradingview", False)):
-        sources.append("tradingview")
     return {
         "screen_mode": str(payload.get("screen_mode") or "tickers"),
         "screen_condition": str(payload.get("screen_condition") or "").strip(),
@@ -384,6 +459,14 @@ def _screen_condition_tickers(payload: dict[str, Any], settings: AppSettings) ->
             strict_common=True,
         )
     return _parse_tickers([row.get("ticker") or row.get("code") for row in rows if row.get("ticker") or row.get("code")])
+
+
+def _futu_daily_history_fetcher(settings: AppSettings):
+    def fetch(symbol: str) -> list[dict[str, Any]]:
+        with FutuProvider(host=settings.futu_host, port=settings.futu_port, market=settings.futu_market) as provider:
+            return provider.history_kline(futu_code(symbol, settings.futu_market), days=260)
+
+    return fetch
 
 
 def _parse_market_cap_range(condition: str) -> tuple[float, float]:
@@ -480,6 +563,19 @@ def _run_monitor_counts(store: PostgresStore, run_ids: list[int]) -> dict[int, d
             """,
             (run_ids,),
         ).fetchall()
+        source_rows = conn.execute(
+            """
+            select run_id,
+                   source_key,
+                   count(*) as observation_count,
+                   count(distinct ticker) as ticker_count,
+                   max(fetched_at) as latest_at
+            from raw_observations
+            where run_id = any(%s::bigint[])
+            group by run_id, source_key
+            """,
+            (run_ids,),
+        ).fetchall()
 
     for row in info_rows:
         run_id = int(row["run_id"])
@@ -514,6 +610,17 @@ def _run_monitor_counts(store: PostgresStore, run_ids: list[int]) -> dict[int, d
             )
         _max_time(bucket, row["latest_at"])
 
+    for row in source_rows:
+        run_id = int(row["run_id"])
+        bucket = counts.setdefault(run_id, {})
+        sources = bucket.setdefault("sources", {})
+        sources[row["source_key"]] = {
+            "observation_count": int(row["observation_count"] or 0),
+            "ticker_count": int(row["ticker_count"] or 0),
+            "latest_at": row["latest_at"],
+        }
+        _max_time(bucket, row["latest_at"])
+
     return counts
 
 
@@ -522,7 +629,20 @@ def _enrich_run(row: dict[str, Any], counts: dict[str, Any]) -> dict[str, Any]:
     config = row.get("config") or {}
     total = len(tickers)
     expected_units = _expected_run_units(config)
+    expected_sources = _expected_run_sources(config)
     dimensions = counts.get("dimensions") or {}
+    collected_sources = counts.get("sources") or {}
+    source_progress = []
+    for source in expected_sources:
+        data = collected_sources.get(source["source_key"]) or {}
+        source_progress.append(
+            {
+                **source,
+                "ticker_count": int(data.get("ticker_count") or 0),
+                "observation_count": int(data.get("observation_count") or 0),
+                "total": total,
+            }
+        )
     dimension_progress = []
     completed_slots = 0
     for dimension in expected_units:
@@ -568,8 +688,24 @@ def _enrich_run(row: dict[str, Any], counts: dict[str, Any]) -> dict[str, Any]:
             "scored_tickers": int(counts.get("scored_tickers") or 0),
             "error_observations": int(counts.get("error_observations") or 0),
         },
+        "sources": source_progress,
         "dimensions": dimension_progress,
     }
+
+
+def _expected_run_sources(config: dict[str, Any]) -> list[dict[str, Any]]:
+    sources = []
+    for source in DATA_SOURCE_DEFINITIONS:
+        if source.status != "active" or not source_is_requested(source, config):
+            continue
+        sources.append(
+            {
+                "source_key": source.source_key,
+                "source_name": source.source_name,
+                "collection_scope": source.collection_scope,
+            }
+        )
+    return sources
 
 
 def _expected_run_units(config: dict[str, Any]) -> list[str]:
@@ -606,6 +742,44 @@ def _dimension_monitor_label(dimension: str) -> str:
         "score": "Score",
     }
     return labels.get(dimension, dimension.replace("_", " ").title())
+
+
+def _trend_has_points(trend: dict[str, Any]) -> bool:
+    points = trend.get("points") if isinstance(trend, dict) else []
+    return isinstance(points, list) and len(points) >= 2
+
+
+def _fallback_price_trend(
+    ticker: str,
+    *,
+    max_points: int,
+    base_trend: dict[str, Any],
+    base_error: str = "",
+) -> dict[str, Any]:
+    errors = []
+    if base_error:
+        errors.append(f"Futu: {base_error}")
+    for label, fetcher in (
+        ("yFinance", lambda: fetch_price_trend(ticker, period="max", max_points=max_points)),
+        ("Nasdaq", lambda: fetch_nasdaq_price_trend(ticker, max_points=max_points)),
+    ):
+        try:
+            fallback = fetcher()
+        except Exception as exc:
+            errors.append(f"{label}: {_short_trend_error(str(exc))}")
+            continue
+        if label == "yFinance":
+            fallback["source_label"] = "Yahoo/yFinance daily close"
+        if base_error:
+            fallback["fallback_from"] = "futu_opend"
+            fallback["fallback_error"] = base_error
+        if _trend_has_points(fallback):
+            return fallback
+        if fallback.get("error"):
+            errors.append(f"{label}: {_short_trend_error(str(fallback['error']))}")
+    if errors:
+        base_trend["error"] = "; ".join(errors)
+    return base_trend
 
 
 def _max_time(bucket: dict[str, Any], value: Any) -> None:
@@ -770,7 +944,7 @@ def _short_trend_error(message: str) -> str:
     return clean[:80]
 
 
-def _llm_error_detail(response) -> str:
+def _llm_error_detail(response, provider_label: str) -> str:
     try:
         payload = response.json()
     except Exception:
@@ -785,8 +959,49 @@ def _llm_error_detail(response) -> str:
         elif payload.get("message"):
             message = str(payload.get("message"))
     if message:
-        return f"MiniMax summary failed ({response.status_code}): {message}"
-    return f"MiniMax summary failed ({response.status_code})."
+        return f"{provider_label} summary failed ({response.status_code}): {message}"
+    return f"{provider_label} summary failed ({response.status_code})."
+
+
+def _llm_provider_label(settings: AppSettings) -> str:
+    provider = (settings.llm_provider or "minimax").strip().lower()
+    if provider == "gemini":
+        return "Gemini"
+    return "MiniMax"
+
+
+def _llm_source_key(provider: str) -> str:
+    if (provider or "").strip().lower() == "gemini":
+        return "gemini"
+    return "minimax"
+
+
+def _truthy(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _snapshot_report_date(snapshot: dict[str, Any]) -> date:
+    return date.today()
+
+
+def _opening_radar_payload(report: dict[str, Any], store: PostgresStore) -> dict[str, Any]:
+    snapshot = report.get("snapshot") or {}
+    advice = report.get("advice") or {}
+    return {
+        **snapshot,
+        "report": {
+            "id": report.get("id"),
+            "report_date": report.get("report_date"),
+            "session_label": report.get("session_label"),
+            "created_at": report.get("created_at"),
+            "updated_at": report.get("updated_at"),
+            "provider": report.get("provider"),
+            "has_advice": bool(advice),
+        },
+        "advice": advice or None,
+        "advice_provider": report.get("provider") or "",
+        "history": store.opening_radar_reports(limit=14),
+    }
 
 
 def _clean_json(value):

@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 from typing import Callable, Iterable
 
+from .company_official import CompanyOfficialClient
 from .config import BacklogScanConfig
 from .datasources import SOURCE_REGISTRY_VERSION, should_collect_source
 from .db import PostgresStore
@@ -17,7 +18,9 @@ from .futu_provider import (
     information_from_futu_snapshot,
     metrics_from_futu_snapshot,
 )
-from .llm import MiniMaxClient, heuristic_summary
+from .launch_library import LaunchLibraryClient
+from .llm import LlmSummary, SummaryClient, build_llm_client, heuristic_summary
+from .openinsider import OpenInsiderClient
 from .product_scoring import MODEL_VERSION, score_hidden_champion
 from .sec import (
     SEC_ANNUAL_FORMS,
@@ -54,6 +57,9 @@ class HiddenChampionPipeline:
         use_yfinance: bool = False,
         use_13f: bool = False,
         use_usaspending: bool = False,
+        use_launch_library: bool = False,
+        use_company_official: bool = False,
+        use_openinsider: bool = False,
         summarize: bool = False,
         delay_seconds: float = 1.0,
         run_context: dict | None = None,
@@ -66,7 +72,11 @@ class HiddenChampionPipeline:
             "use_yfinance": use_yfinance,
             "use_13f": use_13f,
             "use_usaspending": use_usaspending,
+            "use_launch_library": use_launch_library,
+            "use_company_official": use_company_official,
+            "use_openinsider": use_openinsider,
             "summarize": summarize,
+            "llm_provider": self.settings.llm_provider,
             "delay_seconds": delay_seconds,
             "source_registry_version": SOURCE_REGISTRY_VERSION,
         }
@@ -90,7 +100,34 @@ class HiddenChampionPipeline:
             usaspending_client = (
                 USASpendingClient(PROJECT_ROOT / ".cache" / "usaspending") if use_usaspending else None
             )
-            llm_client = self._llm_client() if should_collect_source("minimax", config) else None
+            launch_library_client = (
+                LaunchLibraryClient(
+                    PROJECT_ROOT / ".cache" / "launch_library",
+                    config_path=PROJECT_ROOT / "configs" / "launch_library_watchlist.json",
+                )
+                if use_launch_library
+                else None
+            )
+            openinsider_client = (
+                OpenInsiderClient(PROJECT_ROOT / ".cache" / "openinsider")
+                if use_openinsider
+                else None
+            )
+            company_official_client = (
+                CompanyOfficialClient(
+                    PROJECT_ROOT / ".cache" / "company_official",
+                    config_path=PROJECT_ROOT / "configs" / "company_official_sources.json",
+                )
+                if use_company_official
+                else None
+            )
+            llm_client = (
+                self._llm_client()
+                if should_collect_source("minimax", config)
+                or should_collect_source("gemini", config)
+                or use_company_official
+                else None
+            )
             for index, ticker in enumerate(clean_tickers, start=1):
                 _notify(
                     progress_callback,
@@ -101,6 +138,10 @@ class HiddenChampionPipeline:
                         "total": len(clean_tickers),
                     },
                 )
+                if company_official_client is not None:
+                    official_sources = company_official_client.sources_for_ticker(ticker)
+                    if official_sources:
+                        self.store.upsert_company(ticker, metadata={"official_sources": official_sources})
                 company = self.store.company(ticker) or {"ticker": ticker}
                 if should_collect_source("sec_edgar", config, company):
                     _notify(progress_callback, {"event": "stage", "stage": f"{ticker} SEC filings"})
@@ -116,9 +157,22 @@ class HiddenChampionPipeline:
                     _notify(progress_callback, {"event": "stage", "stage": f"{ticker} USAspending contracts"})
                     self._collect_usaspending(run_id, ticker, usaspending_client)
                     time.sleep(max(0, delay_seconds))
+                if launch_library_client is not None and should_collect_source("launch_library", config, company):
+                    _notify(progress_callback, {"event": "stage", "stage": f"{ticker} Launch Library events"})
+                    self._collect_launch_library(run_id, ticker, launch_library_client)
+                    time.sleep(max(0, delay_seconds))
+                if openinsider_client is not None and should_collect_source("openinsider", config, company):
+                    _notify(progress_callback, {"event": "stage", "stage": f"{ticker} OpenInsider transactions"})
+                    self._collect_openinsider(run_id, ticker, openinsider_client)
+                    time.sleep(max(0, delay_seconds))
                 if should_collect_source("yfinance", config, company):
                     _notify(progress_callback, {"event": "stage", "stage": f"{ticker} yFinance fallback"})
                     self._collect_yfinance(run_id, ticker)
+                    time.sleep(max(0, delay_seconds))
+                company = self.store.company(ticker) or company
+                if company_official_client is not None and should_collect_source("company_official", config, company):
+                    _notify(progress_callback, {"event": "stage", "stage": f"{ticker} official sources"})
+                    self._collect_company_official(run_id, ticker, company_official_client, llm_client)
                     time.sleep(max(0, delay_seconds))
                 _notify(progress_callback, {"event": "stage", "stage": f"{ticker} scoring"})
                 self._score_ticker(run_id, ticker)
@@ -241,7 +295,7 @@ class HiddenChampionPipeline:
         run_id: int,
         ticker: str,
         sec_client: SecClient,
-        llm_client: MiniMaxClient | None,
+        llm_client: SummaryClient | None,
     ) -> None:
         filings = _unique_filings(
             [
@@ -696,6 +750,263 @@ class HiddenChampionPipeline:
             },
         )
 
+    def _collect_launch_library(self, run_id: int, ticker: str, client: LaunchLibraryClient) -> None:
+        company = self.store.company(ticker) or {}
+        try:
+            signal = client.search_ticker_launches(ticker, company=company, limit=100)
+            raw_json = signal.to_dict()
+            observation_type = "upcoming_launches"
+            title = f"{ticker.upper()} Launch Library upcoming launch scan"
+        except Exception as exc:
+            self.store.save_observation(
+                run_id=run_id,
+                ticker=ticker,
+                source_key="launch_library",
+                source_type="future_event",
+                observation_type="upcoming_launches_error",
+                title=f"{ticker.upper()} Launch Library search failed",
+                raw_json={"error": str(exc)},
+                trust_level=35,
+            )
+            return
+
+        matches = raw_json.get("matches") or []
+        source_url = matches[0].get("url", "") if matches else "https://ll.thespacedevs.com/2.3.0/launches/upcoming/"
+        observation_id = self.store.save_observation(
+            run_id=run_id,
+            ticker=ticker,
+            source_key="launch_library",
+            source_type="future_event",
+            observation_type=observation_type,
+            title=title,
+            source_url=source_url,
+            raw_json=raw_json,
+            raw_text="\n\n".join(_launch_excerpt(match) for match in matches[:8]),
+            trust_level=80,
+        )
+        for match in matches[:8]:
+            event_date = _launch_event_date(match)
+            event_title = _launch_event_title(ticker, match)
+            event_summary = _launch_event_summary(match)
+            confidence = _launch_confidence(match)
+            importance = _launch_importance(ticker, match)
+            self.store.save_information_item(
+                run_id=run_id,
+                observation_id=observation_id,
+                ticker=ticker,
+                dimension="future_events",
+                event_date=match.get("net"),
+                title=event_title,
+                summary=event_summary,
+                raw_excerpt=_launch_excerpt(match),
+                source_key="launch_library",
+                source_url=match.get("url", ""),
+                importance_score=importance,
+                quality_score=74,
+                confidence_score=confidence,
+                extracted_by="launch_library",
+                evidence={
+                    "launch_library_match": match,
+                    "launch_event_count": len(matches),
+                    "launch_matched_keywords": match.get("matched_keywords") or [],
+                    "launch_provider": match.get("launch_service_provider"),
+                    "launch_status": (match.get("status") or {}).get("abbrev"),
+                    "launch_net": match.get("net"),
+                },
+            )
+            self.store.save_future_event(
+                ticker=ticker,
+                title=event_title,
+                summary=event_summary,
+                event_date=event_date,
+                window_label=_launch_window_label(match),
+                catalyst_type="space_launch",
+                source_key="launch_library",
+                source_url=match.get("url", ""),
+                importance_score=importance,
+                confidence_score=confidence,
+                status=(match.get("status") or {}).get("abbrev") or "WATCH",
+                evidence={
+                    "launch_library_match": match,
+                    "launch_matched_keywords": match.get("matched_keywords") or [],
+                },
+            )
+
+    def _collect_company_official(
+        self,
+        run_id: int,
+        ticker: str,
+        client: CompanyOfficialClient,
+        llm_client: SummaryClient | None,
+    ) -> None:
+        signal = client.fetch_ticker(ticker)
+        pages = signal.get("pages") or []
+        source_url = _first_page_url(pages)
+        observation_id = self.store.save_observation(
+            run_id=run_id,
+            ticker=ticker,
+            source_key="company_official",
+            source_type="ticker_scoped_official",
+            observation_type="official_source_snapshot",
+            title=f"{ticker.upper()} official source snapshot",
+            source_url=source_url,
+            raw_text=_official_raw_text(signal),
+            raw_json=signal,
+            trust_level=78,
+        )
+        highlights = [
+            {**highlight, "page_label": page.get("label"), "url": page.get("url")}
+            for page in pages
+            for highlight in page.get("highlights", [])[:4]
+        ]
+        if not highlights:
+            return
+        summary = self._summarize_official_source(
+            ticker=ticker,
+            signal=signal,
+            highlights=highlights,
+            llm_client=llm_client,
+        )
+        self.store.save_information_item(
+            run_id=run_id,
+            observation_id=observation_id,
+            ticker=ticker,
+            dimension="future_events",
+            title=f"{ticker.upper()} official source watch",
+            summary=summary.summary,
+            raw_excerpt="\n\n".join(item.get("snippet", "") for item in highlights[:6]),
+            source_key="company_official",
+            source_url=source_url,
+            importance_score=summary.importance_score,
+            quality_score=70,
+            sentiment_score=summary.sentiment_score,
+            confidence_score=summary.confidence_score,
+            extracted_by=summary.provider,
+            evidence={
+                "official_source_count": signal.get("source_count"),
+                "official_highlight_count": signal.get("highlight_count"),
+                "summary_provider": summary.provider,
+                "highlights": highlights[:12],
+                "pages": [
+                    {
+                        "label": page.get("label"),
+                        "url": page.get("url"),
+                        "title": page.get("title"),
+                        "description": page.get("description"),
+                        "status_code": page.get("status_code"),
+                        "fetched_from_cache": page.get("fetched_from_cache"),
+                    }
+                    for page in pages
+                ],
+            },
+        )
+        self.store.save_future_event(
+            ticker=ticker,
+            title=f"{ticker.upper()} official source watch",
+            summary=summary.summary,
+            window_label="Official source watch",
+            catalyst_type="official_source",
+            source_key="company_official",
+            source_url=source_url,
+            importance_score=max(0, summary.importance_score - 4),
+            confidence_score=summary.confidence_score,
+            status="WATCH",
+            evidence={
+                "highlights": highlights[:8],
+                "source_count": signal.get("source_count"),
+                "summary_provider": summary.provider,
+            },
+        )
+
+    def _summarize_official_source(
+        self,
+        *,
+        ticker: str,
+        signal: dict,
+        highlights: list[dict],
+        llm_client: SummaryClient | None,
+    ):
+        if llm_client is not None:
+            try:
+                return llm_client.summarize_crawled_source(
+                    ticker=ticker,
+                    source_name=_official_source_name(signal),
+                    source_url=_first_page_url(signal.get("pages") or []),
+                    snippets=highlights,
+                )
+            except Exception:
+                pass
+        return _official_signal_summary(signal, highlights)
+
+    def _collect_openinsider(self, run_id: int, ticker: str, client: OpenInsiderClient) -> None:
+        try:
+            signal = client.fetch_ticker(ticker, limit=100)
+            raw_json = signal.to_dict()
+        except Exception as exc:
+            self.store.save_observation(
+                run_id=run_id,
+                ticker=ticker,
+                source_key="openinsider",
+                source_type="insider_transactions",
+                observation_type="ticker_screener_error",
+                title=f"{ticker.upper()} OpenInsider ticker screener failed",
+                raw_json={"error": str(exc)},
+                trust_level=32,
+            )
+            return
+        transactions = raw_json.get("transactions") or []
+        observation_id = self.store.save_observation(
+            run_id=run_id,
+            ticker=ticker,
+            source_key="openinsider",
+            source_type="insider_transactions",
+            observation_type="ticker_screener",
+            title=f"{ticker.upper()} OpenInsider ticker screener",
+            source_url=raw_json.get("source_url", ""),
+            raw_text="\n\n".join(_openinsider_excerpt(item) for item in transactions[:12]),
+            raw_json=raw_json,
+            trust_level=64,
+        )
+        if not transactions:
+            return
+        net_purchase_value = float(raw_json.get("net_purchase_value") or 0)
+        sale_value = float(raw_json.get("sale_value") or 0)
+        sentiment = 18 if net_purchase_value > 0 else -16 if sale_value else 0
+        importance = 78 if net_purchase_value > 0 else 60 if sale_value else 52
+        self.store.save_information_item(
+            run_id=run_id,
+            observation_id=observation_id,
+            ticker=ticker,
+            dimension="insider_activity",
+            event_date=transactions[0].get("trade_date") or transactions[0].get("filing_datetime"),
+            title=f"{ticker.upper()} OpenInsider transaction classification",
+            summary=(
+                f"OpenInsider 最新返回 {raw_json['transaction_count']} 笔 Form 4 表格交易，"
+                f"其中公开市场买入 {raw_json['purchase_count']} 笔、卖出 {raw_json['sale_count']} 笔，"
+                f"估算公开市场净买入 {_money(net_purchase_value)}。"
+            ),
+            raw_excerpt="\n\n".join(_openinsider_excerpt(item) for item in transactions[:8]),
+            source_key="openinsider",
+            source_url=raw_json.get("source_url", ""),
+            importance_score=importance,
+            quality_score=58,
+            sentiment_score=sentiment,
+            confidence_score=58,
+            extracted_by="openinsider_parser",
+            evidence={
+                "openinsider_transaction_count": raw_json["transaction_count"],
+                "openinsider_open_market_count": raw_json["open_market_count"],
+                "openinsider_purchase_count": raw_json["purchase_count"],
+                "openinsider_sale_count": raw_json["sale_count"],
+                "openinsider_purchase_value": raw_json["purchase_value"],
+                "openinsider_sale_value": raw_json["sale_value"],
+                "openinsider_net_purchase_value": raw_json["net_purchase_value"],
+                "openinsider_fetched_from_cache": raw_json.get("fetched_from_cache"),
+                "openinsider_warning": raw_json.get("warning"),
+                "transactions": transactions[:24],
+            },
+        )
+
     def _collect_yfinance(self, run_id: int, ticker: str) -> None:
         metrics = fetch_candidate_metrics(
             ticker,
@@ -756,17 +1067,8 @@ class HiddenChampionPipeline:
             model_version=MODEL_VERSION,
         )
 
-    def _llm_client(self) -> MiniMaxClient | None:
-        if not self.settings.minimax_api_key:
-            return None
-        return MiniMaxClient(
-            api_key=self.settings.minimax_api_key,
-            base_url=self.settings.minimax_base_url,
-            model=self.settings.minimax_model,
-            api=self.settings.minimax_api,
-            retries=self.settings.minimax_retries,
-            retry_wait_seconds=self.settings.minimax_retry_wait_seconds,
-        )
+    def _llm_client(self) -> SummaryClient | None:
+        return build_llm_client(self.settings)
 
     def _summarize_filing(
         self,
@@ -776,7 +1078,7 @@ class HiddenChampionPipeline:
         snippets: list[str],
         backlog_mentions: int,
         rpo_mentions: int,
-        llm_client: MiniMaxClient | None,
+        llm_client: SummaryClient | None,
     ):
         if llm_client and snippets:
             try:
@@ -844,6 +1146,99 @@ def _money(value) -> str:
     return f"${value:,.0f}"
 
 
+def _openinsider_excerpt(transaction: dict) -> str:
+    return (
+        f"{transaction.get('trade_date') or transaction.get('filing_datetime') or ''} · "
+        f"{transaction.get('insider_name') or 'Unknown insider'} · "
+        f"{transaction.get('title') or 'n/a'} · "
+        f"{transaction.get('trade_type') or 'transaction'} · "
+        f"{_money(transaction.get('value') or 0)}"
+    )
+
+
+def _launch_event_title(ticker: str, match: dict) -> str:
+    name = str(match.get("name") or "upcoming launch")
+    return f"{ticker.upper()} launch catalyst: {name}"
+
+
+def _launch_event_summary(match: dict) -> str:
+    provider = str(match.get("launch_service_provider") or "unknown provider")
+    rocket = str(match.get("rocket") or "unknown rocket")
+    mission = match.get("mission") or {}
+    status = match.get("status") or {}
+    status_label = status.get("abbrev") or status.get("name") or "WATCH"
+    net = match.get("net") or "TBD"
+    keywords = ", ".join(match.get("matched_keywords") or [])
+    mission_name = mission.get("name") or match.get("name") or "mission"
+    return (
+        f"Launch Library 匹配到 {mission_name}，窗口 {net}，"
+        f"发射商 {provider}，火箭 {rocket}，状态 {status_label}。"
+        f"匹配关键词：{keywords or 'n/a'}。"
+    )
+
+
+def _launch_excerpt(match: dict) -> str:
+    mission = match.get("mission") or {}
+    pad = match.get("pad") or {}
+    return " ".join(
+        str(value or "")
+        for value in (
+            match.get("name"),
+            match.get("net"),
+            match.get("launch_service_provider"),
+            match.get("rocket"),
+            mission.get("name"),
+            mission.get("type"),
+            mission.get("orbit"),
+            mission.get("description"),
+            pad.get("name"),
+            pad.get("location"),
+        )
+    ).strip()
+
+
+def _launch_event_date(match: dict):
+    value = match.get("net")
+    if not value:
+        return None
+    return str(value)[:10]
+
+
+def _launch_window_label(match: dict) -> str:
+    start = match.get("window_start")
+    end = match.get("window_end")
+    if start and end:
+        return f"{start} - {end}"
+    return str(match.get("net") or "Launch window TBD")
+
+
+def _launch_confidence(match: dict) -> int:
+    status = match.get("status") or {}
+    status_abbrev = str(status.get("abbrev") or "").lower()
+    probability = match.get("probability")
+    score = 66
+    if probability is not None:
+        try:
+            score = max(score, min(90, int(float(probability))))
+        except (TypeError, ValueError):
+            pass
+    if status_abbrev in {"go", "success"}:
+        score += 4
+    elif status_abbrev in {"tbc", "tbd"}:
+        score -= 6
+    return max(35, min(92, score))
+
+
+def _launch_importance(ticker: str, match: dict) -> int:
+    keywords = " ".join(match.get("matched_keywords") or []).lower()
+    provider = str(match.get("launch_service_provider") or "").lower()
+    if ticker.upper() == "RKLB" and "rocket lab" in provider:
+        return 86
+    if any(term in keywords for term in ("bluebird", "spacemobile", "redwire", "payload")):
+        return 82
+    return 76
+
+
 def _quality_summary(quality: dict) -> str:
     parts = []
     if quality.get("gross_margin") is not None:
@@ -878,3 +1273,53 @@ def _company_name_for_ticker(store: PostgresStore, ticker: str) -> str:
         if row.get("ticker") == ticker.upper():
             return row.get("name") or ticker
     return ticker
+
+
+def _first_page_url(pages: list[dict]) -> str:
+    for page in pages:
+        if page.get("url"):
+            return str(page["url"])
+    return ""
+
+
+def _official_raw_text(signal: dict) -> str:
+    chunks = []
+    for page in signal.get("pages") or []:
+        header = " · ".join(
+            item
+            for item in (str(page.get("label") or ""), str(page.get("title") or ""), str(page.get("url") or ""))
+            if item
+        )
+        snippets = "\n".join(item.get("snippet", "") for item in page.get("highlights", [])[:5])
+        if header or snippets:
+            chunks.append("\n".join(item for item in (header, snippets) if item))
+    return "\n\n".join(chunks)
+
+
+def _official_signal_summary(signal: dict, highlights: list[dict] | None = None) -> LlmSummary:
+    source_text = _official_source_name(signal)
+    snippets = [
+        " ".join(str(item.get("snippet") or "").split())[:360]
+        for item in (highlights or [])
+        if item.get("snippet")
+    ]
+    if snippets:
+        summary = f"LLM 未生成译写，保留 {source_text} 的官网原文片段待人工翻译：" + "；".join(snippets[:2]) + "。"
+    else:
+        summary = f"官网/IR 来源 {source_text or 'official pages'} 未提取到足够原文片段，需要人工复核。"
+    return LlmSummary(
+        summary=summary,
+        importance_score=58,
+        sentiment_score=0,
+        confidence_score=45,
+        raw_response="",
+        provider="heuristic",
+    )
+
+
+def _official_source_name(signal: dict) -> str:
+    pages = signal.get("pages") or []
+    return "、".join(
+        str(page.get("label") or page.get("url") or "official page")
+        for page in pages[:3]
+    )

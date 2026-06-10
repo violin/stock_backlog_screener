@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 
-SOURCE_REGISTRY_VERSION = 2
+SOURCE_REGISTRY_VERSION = 3
 
 
 SOURCE_LOCALIZATION: dict[str, dict[str, Any]] = {
@@ -68,6 +68,12 @@ SOURCE_LOCALIZATION: dict[str, dict[str, Any]] = {
         "rate_limit_summary_zh": "可选 LLM 调用；单线程、重试一次，能不用就回退到启发式摘要。",
         "cache_policy_zh": "摘要保存为 information_items，不做大范围自动刷新。",
     },
+    "gemini": {
+        "purpose_en": "Alternative Gemini LLM provider for company profiles, filing summaries, and official-source translation.",
+        "purpose_zh": "可替代的 Gemini LLM 摘要源，用于公司画像、公告摘要和官网/IR 片段译写。",
+        "rate_limit_summary_zh": "可选 LLM 调用；单线程、重试一次，遇到限流或权限错误应回退或人工复核。",
+        "cache_policy_zh": "摘要保存为 information_items，不做大范围自动刷新。",
+    },
     "fmp": {
         "purpose_en": "Provides paid structured JSON for calendars, estimates, holders, insider trades, and historical valuation series.",
         "purpose_zh": "提供付费结构化 JSON，用于财报日历、预期值、机构持仓、内部人交易和历史估值序列。",
@@ -77,8 +83,8 @@ SOURCE_LOCALIZATION: dict[str, dict[str, Any]] = {
     "openinsider": {
         "purpose_en": "Classifies insider trades, especially open-market buys versus grants, options, and indirect transactions.",
         "purpose_zh": "更细地区分公开市场买入、授予、期权行权和间接交易等内部人交易类型。",
-        "rate_limit_summary_zh": "无官方 API；如抓取必须慢速、缓存并限制在短名单。",
-        "cache_policy_zh": "计划按 ticker 和查询窗口缓存 24 小时。",
+        "rate_limit_summary_zh": "无官方 API；当前只抓单 ticker HTTP screener，慢速运行并限制在短名单。",
+        "cache_policy_zh": "按 ticker screener URL 缓存 24 小时。",
     },
     "sec_api_io": {
         "purpose_en": "Adds paid structured SEC search, XBRL tag extraction, filing text search, and possible Form 4 webhook support.",
@@ -107,13 +113,13 @@ SOURCE_LOCALIZATION: dict[str, dict[str, Any]] = {
     "launch_library": {
         "purpose_en": "Provides structured upcoming launch windows, providers, rockets, payloads, mission status, and webcast links.",
         "purpose_zh": "提供结构化未来发射窗口、发射商、火箭、载荷、任务状态和直播链接。",
-        "rate_limit_summary_zh": "计划接入 JSON API；只对航天相关 ticker 跑，并做短 TTL 缓存。",
-        "cache_policy_zh": "计划围绕 upcoming launch window 做短缓存。",
+        "rate_limit_summary_zh": "免费公开 JSON API；只对航天相关 ticker 跑，并用短 TTL 缓存避免频繁轮询。",
+        "cache_policy_zh": "upcoming launches 结果缓存 6 小时；按 ticker keyword mapping 提取匹配事件。",
     },
     "fcc_ecfs_oet": {
         "purpose_en": "Monitors FCC dockets, actions, and approvals that can lead satellite, spectrum, and communications catalysts.",
         "purpose_zh": "监控 FCC docket、action 和 approval，用于卫星、频谱和通信类监管催化剂。",
-        "rate_limit_summary_zh": "公开网页/RSS；只对航天和卫星通信相关标的做慢速关键词检查。",
+        "rate_limit_summary_zh": "FCC public API 需要 api_key；只对航天和卫星通信相关标的做慢速关键词检查。",
         "cache_policy_zh": "计划按关键词、ticker 映射和 filing id 做日缓存。",
     },
     "industry_agenda": {
@@ -125,8 +131,14 @@ SOURCE_LOCALIZATION: dict[str, dict[str, Any]] = {
     "company_official": {
         "purpose_en": "Tracks ticker-specific official news, investor relations pages, product pages, mission pages, and launch calendars.",
         "purpose_zh": "跟踪单票公司官网、IR 新闻、产品页、任务页和发射日历等官方信息。",
-        "rate_limit_summary_zh": "单 ticker 来源；只有公司 metadata 配置 official_sources 后才运行。",
-        "cache_policy_zh": "计划按公司做缓存，并用 checksum 检测页面变化。",
+        "rate_limit_summary_zh": "单 ticker 来源；只有显式开启且公司配置 official_sources 后才运行。",
+        "cache_policy_zh": "按 URL 做 24 小时缓存，并保存页面 checksum 方便后续检测变化。",
+    },
+    "company_ir_calendar": {
+        "purpose_en": "Tracks ticker-specific official investor-relations event calendars, earnings releases, conference appearances, and webcast pages.",
+        "purpose_zh": "跟踪单票官方 IR 事件日历、财报发布、会议露出和 webcast 页面。",
+        "rate_limit_summary_zh": "单 ticker 来源；优先用公司官方 IR 页面确认日期，未确认前只作为低置信度窗口。",
+        "cache_policy_zh": "配置事件作为人工 seed；官方 IR 页面采集按 URL 24 小时缓存。",
     },
 }
 
@@ -355,6 +367,24 @@ DATA_SOURCE_DEFINITIONS: tuple[DataSourceDefinition, ...] = (
         notes=("Summary source only; never treated as raw truth.",),
     ),
     DataSourceDefinition(
+        source_key="gemini",
+        source_name="Gemini",
+        source_type="llm_summary",
+        provider="Google",
+        website_url="https://ai.google.dev/",
+        docs_url="https://ai.google.dev/api",
+        trust_level=70,
+        collection_scope="optional",
+        run_flag="summarize",
+        collector_group="summary",
+        default_enabled=False,
+        auth="API key required",
+        dimensions=("company_summary",),
+        rate_limit_summary="Optional LLM call; single-threaded, retry once, and fall back to heuristic summaries where possible.",
+        cache_policy="Summary is persisted as information_items; no broad automatic refresh.",
+        notes=("Set LLM_PROVIDER=gemini and GEMINI_API_KEY to use this provider.",),
+    ),
+    DataSourceDefinition(
         source_key="fmp",
         source_name="Financial Modeling Prep",
         source_type="structured_financial_api",
@@ -385,11 +415,11 @@ DATA_SOURCE_DEFINITIONS: tuple[DataSourceDefinition, ...] = (
         run_flag="use_openinsider",
         collector_group="insider_activity",
         default_enabled=False,
-        status="planned",
+        status="active",
         dimensions=("insider_activity",),
-        rate_limit_summary="No official API; any scraper should be slow, cached, and limited to shortlists.",
-        cache_policy="Planned daily cache by ticker and query window.",
-        notes=("Candidate source for distinguishing open-market insider buys from grants and option exercises.",),
+        rate_limit_summary="No official API; fetch ticker screener pages slowly and only for shortlist symbols.",
+        cache_policy="24-hour HTML cache by ticker screener URL.",
+        notes=("Classifies open-market purchases and sales from ticker-specific Form 4 tables.",),
     ),
     DataSourceDefinition(
         source_key="sec_api_io",
@@ -479,12 +509,12 @@ DATA_SOURCE_DEFINITIONS: tuple[DataSourceDefinition, ...] = (
         run_flag="use_launch_library",
         collector_group="future_events",
         default_enabled=False,
-        status="planned",
+        status="active",
         dimensions=("future_events",),
         applies_to_keywords=("aerospace", "space", "satellite", "defense"),
         applies_to_tickers=("RKLB", "ASTS", "RDW"),
-        rate_limit_summary="Planned JSON API source for upcoming launches; should be cached and run only for space-exposed tickers.",
-        cache_policy="Planned short TTL around upcoming launch windows.",
+        rate_limit_summary="Public JSON API; cached and run only for space-exposed tickers.",
+        cache_policy="6-hour cache for upcoming launch windows plus ticker keyword mapping.",
         notes=("Future catalyst source for launch windows, payloads, provider, status, and webcast links.",),
     ),
     DataSourceDefinition(
@@ -500,10 +530,11 @@ DATA_SOURCE_DEFINITIONS: tuple[DataSourceDefinition, ...] = (
         collector_group="future_events",
         default_enabled=False,
         status="planned",
+        auth="FCC public API key required",
         dimensions=("future_events", "regulatory"),
         applies_to_keywords=("space", "satellite", "communications", "telecom", "aerospace"),
         applies_to_tickers=("ASTS", "RKLB", "RDW"),
-        rate_limit_summary="Public pages/RSS; run slow keyword checks for space and satellite exposed tickers only.",
+        rate_limit_summary="FCC public API requires api_key; run slow keyword checks for space and satellite exposed tickers only.",
         cache_policy="Planned daily docket/action cache by keyword, ticker mapping, and filing id.",
         notes=("Candidate left-side catalyst source for satellite, spectrum, and launch-related approvals.",),
     ),
@@ -539,11 +570,29 @@ DATA_SOURCE_DEFINITIONS: tuple[DataSourceDefinition, ...] = (
         run_flag="use_company_official",
         collector_group="official_site",
         default_enabled=False,
-        status="planned",
-        dimensions=("future_events", "company_summary"),
+        dimensions=("future_events",),
         rate_limit_summary="Ticker-scoped source; only runs when a watched company has official source URLs configured in metadata.",
-        cache_policy="Planned per-company cache and checksum-based change detection.",
+        cache_policy="24-hour per-URL cache with checksum metadata for later change detection.",
         notes=("Designed for IR pages, product pages, launch calendars, and company blog/news feeds.",),
+    ),
+    DataSourceDefinition(
+        source_key="company_ir_calendar",
+        source_name="Company IR Event Calendar",
+        source_type="future_event_calendar",
+        provider="Company investor relations sites",
+        website_url="",
+        docs_url="",
+        trust_level=82,
+        collection_scope="ticker",
+        run_flag="use_company_official",
+        collector_group="future_events",
+        default_enabled=False,
+        status="active",
+        dimensions=("future_events",),
+        applies_to_tickers=("PL",),
+        rate_limit_summary="Ticker-scoped official IR calendar checks; manual seed dates remain low-confidence until confirmed.",
+        cache_policy="Manual seed config plus 24-hour URL cache when official pages are collected.",
+        notes=("Configured timetable seeds live in configs/timetable_seed_events.json.",),
     ),
 )
 
@@ -561,7 +610,13 @@ def source_definition(source_key: str) -> DataSourceDefinition | None:
 def source_is_requested(source: DataSourceDefinition, run_config: dict[str, Any]) -> bool:
     if not source.run_flag:
         return source.default_enabled
-    return bool(run_config.get(source.run_flag, source.default_enabled))
+    requested = bool(run_config.get(source.run_flag, source.default_enabled))
+    if source.source_key in {"minimax", "gemini"}:
+        provider = str(run_config.get("llm_provider") or "minimax").strip().lower()
+        if provider not in {"minimax", "gemini"}:
+            provider = "minimax"
+        return requested and source.source_key == provider
+    return requested
 
 
 def source_applies_to_company(source: DataSourceDefinition, company: dict[str, Any] | None) -> bool:
@@ -623,6 +678,9 @@ def _has_ticker_source_config(source: DataSourceDefinition, company: dict[str, A
     for item in official_sources:
         if isinstance(item, str) and item.strip():
             return True
-        if isinstance(item, dict) and item.get("source_key") == source.source_key:
-            return True
+        if isinstance(item, dict):
+            if item.get("source_key") == source.source_key:
+                return True
+            if source.source_key == "company_official" and item.get("url"):
+                return True
     return False

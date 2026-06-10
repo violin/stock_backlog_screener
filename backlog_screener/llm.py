@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Protocol, TYPE_CHECKING
 
 import requests
+
+if TYPE_CHECKING:
+    from .settings import AppSettings
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,31 @@ class CompanyProfileSummary:
             "confidence_score": self.confidence_score,
             "provider": self.provider,
         }
+
+
+class SummaryClient(Protocol):
+    def summarize_filing_signal(self, *, ticker: str, title: str, text: str) -> LlmSummary:
+        ...
+
+    def summarize_company_profile(
+        self,
+        *,
+        ticker: str,
+        company: dict,
+        score: dict | None,
+        items: list[dict],
+    ) -> CompanyProfileSummary:
+        ...
+
+    def summarize_crawled_source(
+        self,
+        *,
+        ticker: str,
+        source_name: str,
+        source_url: str,
+        snippets: list[dict],
+    ) -> LlmSummary:
+        ...
 
 
 class MiniMaxClient:
@@ -116,6 +144,51 @@ class MiniMaxClient:
             raw_response=content,
         )
 
+    def summarize_crawled_source(
+        self,
+        *,
+        ticker: str,
+        source_name: str,
+        source_url: str,
+        snippets: list[dict],
+    ) -> LlmSummary:
+        system = (
+            "你是投研工具里的网页抓取译审。你的任务是把英文官网/IR/新闻页面片段"
+            "忠实翻译并压缩成中文说明。不要泛泛总结成关键词扫描结果，只表达原文实际意思。"
+            "只输出 JSON。"
+        )
+        payload = self._payload(
+            system=system,
+            user=_crawled_source_prompt(
+                ticker=ticker,
+                source_name=source_name,
+                source_url=source_url,
+                snippets=snippets,
+            ),
+        )
+        response = self._post_with_retry(payload)
+        response.raise_for_status()
+        data = response.json()
+        content = _response_content(data)
+        parsed = _extract_json(content)
+        return LlmSummary(
+            summary=_text(parsed.get("summary")) or content.strip(),
+            importance_score=_score(parsed.get("importance_score"), default=68),
+            sentiment_score=_score(parsed.get("sentiment_score"), default=0),
+            confidence_score=_score(parsed.get("confidence_score"), default=62),
+            raw_response=content,
+        )
+
+    def complete_json(self, *, system: str, user: str) -> dict:
+        payload = self._payload(system=system, user=user)
+        response = self._post_with_retry(payload)
+        response.raise_for_status()
+        content = _response_content(response.json())
+        parsed = _extract_json(content)
+        parsed["raw_response"] = content
+        parsed["provider"] = "minimax"
+        return parsed
+
     def _payload(self, *, system: str, user: str) -> dict:
         if self.api == "openai-completions":
             return {
@@ -164,6 +237,177 @@ class MiniMaxClient:
             if wait_seconds > 0:
                 time.sleep(wait_seconds)
         return last_response
+
+
+class GeminiClient:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str = "https://generativelanguage.googleapis.com/v1beta",
+        model: str = "gemini-2.5-flash",
+        timeout: int = 45,
+        retries: int = 1,
+        retry_wait_seconds: float = 30,
+    ):
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.timeout = timeout
+        self.retries = max(0, retries)
+        self.retry_wait_seconds = max(0, retry_wait_seconds)
+
+    def summarize_filing_signal(self, *, ticker: str, title: str, text: str) -> LlmSummary:
+        system = (
+            "你是美股中小盘产业链研究员。你的任务是从公司公告/财报片段中提炼"
+            "和隐形冠军选股有关的可验证信息。只输出 JSON。"
+        )
+        payload = self._payload(system=system, user=_prompt(ticker=ticker, title=title, text=text))
+        response = self._post_with_retry(payload)
+        response.raise_for_status()
+        data = response.json()
+        content = _gemini_response_content(data)
+        parsed = _extract_json(content)
+        return LlmSummary(
+            summary=str(parsed.get("summary") or "").strip() or content.strip(),
+            importance_score=_score(parsed.get("importance_score"), default=65),
+            sentiment_score=_score(parsed.get("sentiment_score"), default=0),
+            confidence_score=_score(parsed.get("confidence_score"), default=65),
+            raw_response=content,
+            provider="gemini",
+        )
+
+    def summarize_company_profile(
+        self,
+        *,
+        ticker: str,
+        company: dict,
+        score: dict | None,
+        items: list[dict],
+    ) -> CompanyProfileSummary:
+        system = (
+            "你是资深美股产业链研究员，擅长把结构化证据压缩成投研摘要。"
+            "只依据输入事实，不编造业务、客户、订单或财务数据。只输出 JSON。"
+        )
+        payload = self._payload(
+            system=system,
+            user=_company_profile_prompt(
+                ticker=ticker,
+                company=company,
+                score=score,
+                items=items,
+            ),
+        )
+        response = self._post_with_retry(payload)
+        response.raise_for_status()
+        data = response.json()
+        content = _gemini_response_content(data)
+        parsed = _extract_json(content)
+        return CompanyProfileSummary(
+            business=_text(parsed.get("business")),
+            industry_role=_text(parsed.get("industry_role")),
+            recommendation_reason=_string_list(parsed.get("recommendation_reason")),
+            risks=_string_list(parsed.get("risks")),
+            watch_items=_string_list(parsed.get("watch_items")),
+            confidence_score=_score(parsed.get("confidence_score"), default=65),
+            raw_response=content,
+            provider="gemini",
+        )
+
+    def summarize_crawled_source(
+        self,
+        *,
+        ticker: str,
+        source_name: str,
+        source_url: str,
+        snippets: list[dict],
+    ) -> LlmSummary:
+        system = (
+            "你是投研工具里的网页抓取译审。你的任务是把英文官网/IR/新闻页面片段"
+            "忠实翻译并压缩成中文说明。不要泛泛总结成关键词扫描结果，只表达原文实际意思。"
+            "只输出 JSON。"
+        )
+        payload = self._payload(
+            system=system,
+            user=_crawled_source_prompt(
+                ticker=ticker,
+                source_name=source_name,
+                source_url=source_url,
+                snippets=snippets,
+            ),
+        )
+        response = self._post_with_retry(payload)
+        response.raise_for_status()
+        data = response.json()
+        content = _gemini_response_content(data)
+        parsed = _extract_json(content)
+        return LlmSummary(
+            summary=_text(parsed.get("summary")) or content.strip(),
+            importance_score=_score(parsed.get("importance_score"), default=68),
+            sentiment_score=_score(parsed.get("sentiment_score"), default=0),
+            confidence_score=_score(parsed.get("confidence_score"), default=62),
+            raw_response=content,
+            provider="gemini",
+        )
+
+    def _payload(self, *, system: str, user: str) -> dict:
+        return {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": f"{system}\n\n{user}"}],
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.2,
+            },
+        }
+
+    def _post_with_retry(self, payload: dict) -> requests.Response:
+        headers = {
+            "x-goog-api-key": self.api_key,
+            "Content-Type": "application/json",
+        }
+        url = f"{self.base_url}/models/{self.model}:generateContent"
+        last_response = None
+        for attempt in range(self.retries + 1):
+            response = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=self.timeout,
+            )
+            if response.status_code != 429 or attempt >= self.retries:
+                return response
+            last_response = response
+            wait_seconds = _retry_after_seconds(response) or self.retry_wait_seconds * (attempt + 1)
+            if wait_seconds > 0:
+                time.sleep(wait_seconds)
+        return last_response
+
+
+def build_llm_client(settings: AppSettings) -> SummaryClient | None:
+    provider = (settings.llm_provider or "minimax").strip().lower()
+    if provider == "gemini":
+        if not settings.gemini_api_key:
+            return None
+        return GeminiClient(
+            api_key=settings.gemini_api_key,
+            base_url=settings.gemini_base_url,
+            model=settings.gemini_model,
+            retries=settings.gemini_retries,
+            retry_wait_seconds=settings.gemini_retry_wait_seconds,
+        )
+    if not settings.minimax_api_key:
+        return None
+    return MiniMaxClient(
+        api_key=settings.minimax_api_key,
+        base_url=settings.minimax_base_url,
+        model=settings.minimax_model,
+        api=settings.minimax_api,
+        retries=settings.minimax_retries,
+        retry_wait_seconds=settings.minimax_retry_wait_seconds,
+    )
 
 
 def heuristic_summary(*, ticker: str, snippets: list[str], backlog_mentions: int, rpo_mentions: int) -> LlmSummary:
@@ -239,6 +483,42 @@ def _company_profile_prompt(*, ticker: str, company: dict, score: dict | None, i
 
 资料 JSON：
 {json.dumps(context, ensure_ascii=False, default=str)[:16000]}
+""".strip()
+
+
+def _crawled_source_prompt(*, ticker: str, source_name: str, source_url: str, snippets: list[dict]) -> str:
+    compact_snippets = [
+        {
+            "term": item.get("term"),
+            "page_label": item.get("page_label"),
+            "url": item.get("url"),
+            "snippet": item.get("snippet"),
+        }
+        for item in snippets[:8]
+    ]
+    return f"""
+请把 {ticker.upper()} 的官网/IR 抓取片段翻译并整理成中文。
+
+来源：
+- 名称：{source_name}
+- URL：{source_url}
+
+输出必须是 JSON：
+{{
+  "summary": "中文，2-4 句。必须忠实表达英文原文具体意思，保留产品名、平台名、型号、客户类型等英文专有名词；不要写成“检出若干关键词”这种元描述。",
+  "importance_score": 0-100,
+  "sentiment_score": -100 到 100,
+  "confidence_score": 0-100
+}}
+
+要求：
+- 不要编造原文没有出现的订单、合同、客户、日期、金额或催化剂。
+- 如果片段主要是产品/新闻列表，就翻译它列出的产品、平台、应用场景或新闻主题。
+- 保留英文专有名词，例如 ZeroFlap、AEC、PILOT、GPU-to-GPU、scale-up/scale-out。
+- 中文要适合直接放进投研工具的 Timetable/Truth 卡片。
+
+抓取片段 JSON：
+{json.dumps(compact_snippets, ensure_ascii=False, default=str)[:9000]}
 """.strip()
 
 
@@ -343,6 +623,23 @@ def _response_content(data: dict) -> str:
     message = data.get("message")
     if isinstance(message, dict):
         return str(message.get("content") or "")
+    return json.dumps(data, ensure_ascii=False)
+
+
+def _gemini_response_content(data: dict) -> str:
+    candidates = data.get("candidates")
+    if isinstance(candidates, list) and candidates:
+        content = candidates[0].get("content") if isinstance(candidates[0], dict) else None
+        if isinstance(content, dict):
+            parts = content.get("parts")
+            if isinstance(parts, list):
+                text_parts = [
+                    str(part.get("text"))
+                    for part in parts
+                    if isinstance(part, dict) and part.get("text") is not None
+                ]
+                if text_parts:
+                    return "\n".join(text_parts)
     return json.dumps(data, ensure_ascii=False)
 
 
