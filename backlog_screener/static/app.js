@@ -9,20 +9,31 @@ let datasourcesLoaded = false;
 let activeWorkspaceView = "research";
 let latestWatchlist = new Set();
 let tradingViewLoadedTicker = null;
+let shortTermTracking = false;
+let shortTermTicker = null;
+let shortTermTimer = null;
+let shortTermUnloadSent = false;
 let openingRadarLoaded = false;
 let openingRadarSnapshot = null;
 let openingRadarReportId = null;
 let activeSectorRadar = "space";
+let activeOpeningRadarSubView = "today";
+let openingTrendCache = new Map();
+let openingTrendRequest = 0;
+let openingTrendData = null;
 
 const TICKER_STORAGE_KEY = "codeBeta.tickers";
 const LEGACY_TICKER_STORAGE_KEY = "hiddenChampionScreener.tickers";
 const CANDIDATE_SEARCH_DEBOUNCE_MS = 250;
+const SHORT_TERM_POLL_MS = 1000;
 
 const els = {
   openScreeningButton: document.querySelector("#openScreeningButton"),
   navPoolsButton: document.querySelector("#navPoolsButton"),
   navDetailsButton: document.querySelector("#navDetailsButton"),
   navOpeningRadarButton: document.querySelector("#navOpeningRadarButton"),
+  navOpeningTodayButton: document.querySelector("#navOpeningTodayButton"),
+  navOpeningTrendButton: document.querySelector("#navOpeningTrendButton"),
   navDataSourcesButton: document.querySelector("#navDataSourcesButton"),
   openRunsButton: document.querySelector("#openRunsButton"),
   globalSearch: document.querySelector("#globalSearch"),
@@ -38,6 +49,25 @@ const els = {
   openingRadarAsOf: document.querySelector("#openingRadarAsOf"),
   refreshOpeningRadarButton: document.querySelector("#refreshOpeningRadarButton"),
   generateOpeningAdviceButton: document.querySelector("#generateOpeningAdviceButton"),
+  openingTodayTab: document.querySelector("#openingTodayTab"),
+  openingLongTermTab: document.querySelector("#openingLongTermTab"),
+  openingTodayPanel: document.querySelector("#openingTodayPanel"),
+  openingTrendPanel: document.querySelector("#openingTrendPanel"),
+  openingTrendIndex: document.querySelector("#openingTrendIndex"),
+  openingTrendTransform: document.querySelector("#openingTrendTransform"),
+  refreshOpeningTrendButton: document.querySelector("#refreshOpeningTrendButton"),
+  openingTrendStatus: document.querySelector("#openingTrendStatus"),
+  openingTrendKicker: document.querySelector("#openingTrendKicker"),
+  openingTrendTitle: document.querySelector("#openingTrendTitle"),
+  openingTrendLatest: document.querySelector("#openingTrendLatest"),
+  openingTrendChart: document.querySelector("#openingTrendChart"),
+  openingTrendRange: document.querySelector("#openingTrendRange"),
+  openingTrendSource: document.querySelector("#openingTrendSource"),
+  openingTrendStats: document.querySelector("#openingTrendStats"),
+  openingTrendExplain: document.querySelector("#openingTrendExplain"),
+  analyzeOpeningTrendButton: document.querySelector("#analyzeOpeningTrendButton"),
+  openingTrendAnalysisMeta: document.querySelector("#openingTrendAnalysisMeta"),
+  openingTrendAnalysisBody: document.querySelector("#openingTrendAnalysisBody"),
   openingRadarPrimary: document.querySelector("#openingRadarPrimary"),
   sectorRadarTabs: document.querySelector("#sectorRadarTabs"),
   sectorRadarPanel: document.querySelector("#sectorRadarPanel"),
@@ -58,10 +88,12 @@ const els = {
   summaryTab: document.querySelector("#summaryTab"),
   truthTab: document.querySelector("#truthTab"),
   timetableTab: document.querySelector("#timetableTab"),
+  shortTermTab: document.querySelector("#shortTermTab"),
   chartTab: document.querySelector("#chartTab"),
   summaryPanel: document.querySelector("#summaryPanel"),
   truthPanel: document.querySelector("#truthPanel"),
   timetablePanel: document.querySelector("#timetablePanel"),
+  shortTermPanel: document.querySelector("#shortTermPanel"),
   chartPanel: document.querySelector("#chartPanel"),
   tradingViewWidget: document.querySelector("#tradingViewWidget"),
   tradingViewLink: document.querySelector("#tradingViewLink"),
@@ -78,6 +110,14 @@ const els = {
   timetableStatus: document.querySelector("#timetableStatus"),
   refreshTimetableButton: document.querySelector("#refreshTimetableButton"),
   futureTimeline: document.querySelector("#futureTimeline"),
+  shortTermStatus: document.querySelector("#shortTermStatus"),
+  shortTermWindow: document.querySelector("#shortTermWindow"),
+  shortTermTrackButton: document.querySelector("#shortTermTrackButton"),
+  shortTermDecision: document.querySelector("#shortTermDecision"),
+  shortTermRules: document.querySelector("#shortTermRules"),
+  shortTermMetrics: document.querySelector("#shortTermMetrics"),
+  shortTermChart: document.querySelector("#shortTermChart"),
+  shortTermTape: document.querySelector("#shortTermTape"),
   workerState: document.querySelector("#workerState"),
   latestRun: document.querySelector("#latestRun"),
   queueDrawer: document.querySelector("#queueDrawer"),
@@ -205,7 +245,43 @@ async function showWorkspaceView(view) {
   els.navDetailsButton.classList.toggle("active", view === "details");
   els.navDataSourcesButton.classList.toggle("active", datasourceView);
   if (datasourceView) await loadDataSources();
-  if (openingRadarView) await loadOpeningRadar();
+  if (openingRadarView) {
+    renderOpeningRadarSubView();
+    if (activeOpeningRadarSubView === "trend") {
+      await loadOpeningLongTermTrend();
+    } else {
+      await loadOpeningRadar();
+    }
+  }
+}
+
+async function openOpeningRadarView(subView = "today") {
+  activeOpeningRadarSubView = subView === "trend" ? "trend" : "today";
+  await showWorkspaceView("opening-radar");
+}
+
+async function setOpeningRadarSubView(subView) {
+  activeOpeningRadarSubView = subView === "trend" ? "trend" : "today";
+  renderOpeningRadarSubView();
+  if (activeWorkspaceView !== "opening-radar") return;
+  if (activeOpeningRadarSubView === "trend") {
+    await loadOpeningLongTermTrend();
+  } else {
+    await loadOpeningRadar();
+  }
+}
+
+function renderOpeningRadarSubView() {
+  const trendActive = activeOpeningRadarSubView === "trend";
+  els.openingTodayTab.classList.toggle("active", !trendActive);
+  els.openingLongTermTab.classList.toggle("active", trendActive);
+  els.openingTodayPanel.hidden = trendActive;
+  els.openingTrendPanel.hidden = !trendActive;
+  els.refreshOpeningRadarButton.hidden = trendActive;
+  els.generateOpeningAdviceButton.hidden = trendActive;
+  els.navOpeningTodayButton.classList.toggle("active", !trendActive);
+  els.navOpeningTrendButton.classList.toggle("active", trendActive);
+  els.navOpeningRadarButton.setAttribute("aria-expanded", trendActive ? "true" : "false");
 }
 
 async function loadOpeningRadar({force = false} = {}) {
@@ -353,6 +429,237 @@ function renderRadarCard(item, {fixed = false} = {}) {
   return article;
 }
 
+async function loadOpeningLongTermTrend({force = false} = {}) {
+  const indexKey = els.openingTrendIndex.value || "nasdaq";
+  const transform = els.openingTrendTransform.value || "raw";
+  const cacheKey = `${indexKey}:${transform}`;
+  const requestId = ++openingTrendRequest;
+  if (!force && openingTrendCache.has(cacheKey)) {
+    renderOpeningLongTermTrend(openingTrendCache.get(cacheKey));
+    return;
+  }
+  els.openingTrendStatus.textContent = "Loading long term history";
+  els.openingTrendChart.innerHTML = `<div class="empty">Loading long term trend</div>`;
+  resetOpeningTrendAnalysis();
+  try {
+    const data = await api(`/api/opening-radar/long-term-trend?index=${encodeURIComponent(indexKey)}&transform=${encodeURIComponent(transform)}&max_points=760`);
+    if (requestId !== openingTrendRequest) return;
+    openingTrendCache.set(cacheKey, data);
+    renderOpeningLongTermTrend(data);
+  } catch (error) {
+    if (requestId !== openingTrendRequest) return;
+    els.openingTrendStatus.textContent = "Trend unavailable";
+    els.openingTrendChart.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+    els.openingTrendStats.innerHTML = "";
+  }
+}
+
+function renderOpeningLongTermTrend(data) {
+  openingTrendData = data;
+  const points = Array.isArray(data.points) ? data.points.filter((point) => Number.isFinite(Number(point.value))) : [];
+  const transform = data.transform || {};
+  const transformKey = transform.key || els.openingTrendTransform.value || "raw";
+  els.openingTrendKicker.textContent = transform.label || "Long Term Trend";
+  els.openingTrendTitle.textContent = data.label || data.symbol || "Index";
+  els.openingTrendStatus.textContent = data.latest_date
+    ? `${data.symbol || ""} · Updated ${data.latest_date}`
+    : data.error || "No data";
+  els.openingTrendSource.textContent = data.source_label || data.source || "-";
+  els.openingTrendRange.textContent = data.first_date && data.latest_date ? `${shortYear(data.first_date)}-${shortYear(data.latest_date)}` : "-";
+  if (data.error || points.length < 2) {
+    els.openingTrendLatest.textContent = "-";
+    els.openingTrendChart.innerHTML = `<div class="empty">${escapeHtml(data.error || "Not enough long term history")}</div>`;
+    els.openingTrendStats.innerHTML = "";
+    els.analyzeOpeningTrendButton.disabled = true;
+    return;
+  }
+  els.analyzeOpeningTrendButton.disabled = false;
+  const latest = points[points.length - 1];
+  els.openingTrendLatest.textContent = trendValueText(latest.value, transformKey);
+  els.openingTrendChart.innerHTML = openingTrendSvg(points, transformKey);
+  renderOpeningTrendStats(data, latest.value, transformKey);
+  renderOpeningTrendExplain(data);
+}
+
+function openingTrendSvg(points, transformKey) {
+  const width = 980;
+  const height = 430;
+  const padTop = 22;
+  const padRight = 18;
+  const padBottom = 42;
+  const padLeft = 18;
+  const plotWidth = width - padLeft - padRight;
+  const plotHeight = height - padTop - padBottom;
+  const values = points.map((point) => Number(point.value));
+  const [minValue, maxValue] = openingTrendDisplayDomain(values, transformKey);
+  const span = maxValue - minValue || Math.max(Math.abs(maxValue), 1);
+  const lastIndex = points.length - 1;
+  const path = points
+    .map((point, index) => {
+      const x = padLeft + (index / lastIndex) * plotWidth;
+      const clampedValue = clamp(Number(point.value), minValue, maxValue);
+      const y = padTop + (1 - (clampedValue - minValue) / span) * plotHeight;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  const gridYs = [0.25, 0.5, 0.75]
+    .map((ratio) => {
+      const y = padTop + ratio * plotHeight;
+      return `<line class="opening-trend-grid-line" x1="${padLeft}" x2="${width - padRight}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}" />`;
+    })
+    .join("");
+  const axisY = height - padBottom + 12;
+  const tickCount = Math.min(6, points.length);
+  const xTicks = Array.from({length: tickCount}, (_, tickIndex) => {
+    const pointIndex = tickCount === 1 ? 0 : Math.round((tickIndex / (tickCount - 1)) * lastIndex);
+    const point = points[pointIndex] || {};
+    const x = padLeft + (pointIndex / lastIndex) * plotWidth;
+    const label = shortYear(point.date || point.as_of || point.timestamp || "");
+    if (!label) return "";
+    const anchor = tickIndex === 0 ? "start" : tickIndex === tickCount - 1 ? "end" : "middle";
+    return `
+      <line class="opening-trend-axis-tick" x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${axisY - 5}" y2="${axisY}" />
+      <text class="opening-trend-axis-label" x="${x.toFixed(1)}" y="${axisY + 16}" text-anchor="${anchor}">${escapeHtml(label)}</text>
+    `;
+  }).join("");
+  let zeroLine = "";
+  if (transformKey === "detrended" && minValue < 0 && maxValue > 0) {
+    const y = padTop + (1 - (0 - minValue) / span) * plotHeight;
+    zeroLine = `<line class="opening-trend-zero-line" x1="${padLeft}" x2="${width - padRight}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}" />`;
+  }
+  return `
+    <svg class="opening-trend-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-label="Long term index trend">
+      ${gridYs}
+      ${zeroLine}
+      <polyline class="opening-trend-line" points="${path}" />
+      <line class="opening-trend-axis-line" x1="${padLeft}" x2="${width - padRight}" y1="${axisY}" y2="${axisY}" />
+      ${xTicks}
+    </svg>
+  `;
+}
+
+function openingTrendDisplayDomain(values, transformKey) {
+  const finiteValues = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+  if (!finiteValues.length) return [0, 1];
+  const rawMin = finiteValues[0];
+  const rawMax = finiteValues[finiteValues.length - 1];
+  return paddedDomain(rawMin, rawMax);
+}
+
+function paddedDomain(minValue, maxValue) {
+  if (!Number.isFinite(minValue) || !Number.isFinite(maxValue)) return [0, 1];
+  const span = maxValue - minValue;
+  if (span === 0) {
+    const pad = Math.max(Math.abs(maxValue) * 0.1, 1);
+    return [minValue - pad, maxValue + pad];
+  }
+  const pad = span * 0.08;
+  return [minValue - pad, maxValue + pad];
+}
+
+function quantile(sortedValues, ratio) {
+  if (!sortedValues.length) return NaN;
+  const index = (sortedValues.length - 1) * ratio;
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  if (lower === upper) return sortedValues[lower];
+  const weight = index - lower;
+  return sortedValues[lower] * (1 - weight) + sortedValues[upper] * weight;
+}
+
+function clamp(value, minValue, maxValue) {
+  if (!Number.isFinite(value)) return minValue;
+  return Math.min(Math.max(value, minValue), maxValue);
+}
+
+function renderOpeningTrendStats(data, latestValue, transformKey) {
+  const stats = [
+    ["Latest", trendValueText(latestValue, transformKey), data.latest_date || "-"],
+    ["Total", pctText(data.total_return), "raw return"],
+    ["CAGR", pctText(data.cagr), "annualized"],
+    ["Points", String(data.point_count || 0), data.period || "max"],
+  ];
+  if (transformKey === "detrended") {
+    stats.splice(1, 0, ["Gap", trendValueText(latestValue, transformKey), "vs log trend"]);
+  }
+  els.openingTrendStats.innerHTML = stats
+    .map(
+      ([label, value, help]) => `
+        <div class="opening-trend-stat">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+          <small>${escapeHtml(help || "")}</small>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function renderOpeningTrendExplain(data) {
+  const transform = data.transform || {};
+  const text = transform.explanation_zh || "对长期指数做数学变换，帮助把复利增长和估值偏离分开看。";
+  els.openingTrendExplain.innerHTML = `
+    <strong>How to read</strong>
+    <p>${escapeHtml(text)}</p>
+  `;
+}
+
+function resetOpeningTrendAnalysis() {
+  if (!els.openingTrendAnalysisMeta || !els.openingTrendAnalysisBody) return;
+  els.openingTrendAnalysisMeta.textContent = "Manual analyze";
+  els.openingTrendAnalysisBody.innerHTML = `<div class="empty">Analyze current trend points for risk and opportunity.</div>`;
+}
+
+async function analyzeOpeningTrend() {
+  els.analyzeOpeningTrendButton.disabled = true;
+  els.analyzeOpeningTrendButton.textContent = "Thinking";
+  els.openingTrendAnalysisMeta.textContent = "MiniMax running";
+  els.openingTrendAnalysisBody.innerHTML = `<div class="empty">Analyzing current trend points</div>`;
+  try {
+    if (!openingTrendData || openingTrendData.error) {
+      await loadOpeningLongTermTrend({force: false});
+    }
+    const data = await api("/api/opening-radar/long-term-trend/analyze", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        index: els.openingTrendIndex.value || "nasdaq",
+        transform: els.openingTrendTransform.value || "raw",
+      }),
+    });
+    renderOpeningTrendAnalysis(data);
+  } catch (error) {
+    els.openingTrendAnalysisMeta.textContent = "Failed";
+    els.openingTrendAnalysisBody.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+  } finally {
+    els.analyzeOpeningTrendButton.disabled = false;
+    els.analyzeOpeningTrendButton.textContent = "Analyze";
+  }
+}
+
+function renderOpeningTrendAnalysis(data) {
+  const analysis = data.analysis || data;
+  els.openingTrendAnalysisMeta.textContent = `${escapeHtml(data.provider || analysis.provider || "MiniMax")} · C ${Number(analysis.confidence_score || 0).toFixed(0)}`;
+  els.openingTrendAnalysisBody.innerHTML = `
+    <section class="advice-block wide">
+      <h3>Current Read</h3>
+      <p>${escapeHtml(analysis.current_read || analysis.summary || "No analysis returned.")}</p>
+    </section>
+    ${adviceList("Risks", analysis.risks)}
+    ${adviceList("Opportunities", analysis.opportunities)}
+    ${adviceList("Watch Levels", analysis.watch_levels)}
+    ${adviceList("Action Notes", analysis.action_notes)}
+  `;
+}
+
+function trendValueText(value, transformKey) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  if (transformKey === "detrended") return pctText(number);
+  if (transformKey === "log") return number.toFixed(2);
+  return number >= 1000 ? number.toFixed(0) : number.toFixed(2);
+}
+
 async function generateOpeningAdvice() {
   els.generateOpeningAdviceButton.disabled = true;
   els.generateOpeningAdviceButton.textContent = "Thinking";
@@ -408,20 +715,20 @@ function numberText(value) {
 function rsiLabel(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "-";
-  if (number >= 70) return "overbought";
-  if (number <= 30) return "oversold";
-  if (number >= 55) return "bullish zone";
-  if (number <= 45) return "weak zone";
-  return "neutral";
+  if (number >= 70) return "超买";
+  if (number <= 30) return "超卖";
+  if (number >= 55) return "偏强区";
+  if (number <= 45) return "偏弱区";
+  return "中性";
 }
 
 function kdjLabel(indicators) {
   const k = Number(indicators.kdj_k);
   const d = Number(indicators.kdj_d);
   if (!Number.isFinite(k) || !Number.isFinite(d)) return "-";
-  if (k > 80) return "hot";
-  if (k < 20) return "cold";
-  return k > d ? "turning up" : "turning down";
+  if (k > 80) return "过热";
+  if (k < 20) return "过冷";
+  return k > d ? "拐头向上" : "拐头向下";
 }
 
 function adxLabel(value) {
@@ -931,12 +1238,19 @@ function highlightMatch(value, searchTerm) {
 
 async function loadTicker(ticker) {
   const requestedTicker = ticker.toUpperCase();
+  if (shortTermTracking && shortTermTicker && shortTermTicker !== requestedTicker) {
+    await stopShortTermTracking({ticker: shortTermTicker, silent: true});
+  }
+  if (!shortTermTracking && shortTermTicker !== requestedTicker) {
+    resetShortTermPanel();
+  }
   const dimension = els.dimensionFilter.value;
   const data = await api(`/api/ticker/${requestedTicker}?dimension=${encodeURIComponent(dimension)}&min_importance=0`);
   if (requestedTicker !== selectedTicker) return;
   els.detailTitle.textContent = requestedTicker;
   els.detailScore.textContent = data.score ? `${Number(data.score.total_score).toFixed(1)} · ${data.score.grade}` : "-";
   if (activeDetailTab === "chart") renderTradingViewChart(requestedTicker);
+  if (activeDetailTab === "shortterm") loadShortTermSnapshot();
   renderLastRun(data.last_run);
   renderScore(data.score);
   renderMissing(data.score);
@@ -962,6 +1276,8 @@ function clearTickerDetail() {
   els.futureTimeline.innerHTML = `<div class="empty">No timetable items</div>`;
   renderTrend(null);
   renderTradingViewChart(null);
+  stopShortTermTracking({silent: true});
+  resetShortTermPanel();
 }
 
 function renderLastRun(run) {
@@ -983,6 +1299,7 @@ function setDetailTab(tab) {
     ["summary", els.summaryTab, els.summaryPanel],
     ["truth", els.truthTab, els.truthPanel],
     ["timetable", els.timetableTab, els.timetablePanel],
+    ["shortterm", els.shortTermTab, els.shortTermPanel],
     ["chart", els.chartTab, els.chartPanel],
   ];
   for (const [key, tabButton, panel] of entries) {
@@ -993,6 +1310,13 @@ function setDetailTab(tab) {
   els.dimensionFilter.disabled = !truthActive;
   els.dimensionFilter.closest("label")?.classList.toggle("is-disabled", !truthActive);
   if (tab === "timetable" && selectedTicker) loadTickerFuture(selectedTicker);
+  if (tab === "shortterm") {
+    if (selectedTicker && shortTermTracking) {
+      loadShortTermSnapshot();
+    } else {
+      resetShortTermPanel();
+    }
+  }
   if (tab === "chart") renderTradingViewChart(selectedTicker);
 }
 
@@ -1417,6 +1741,436 @@ function shortTrendError(message) {
   return clean ? clean.slice(0, 32) : "Trend unavailable";
 }
 
+async function toggleShortTermTracking() {
+  if (shortTermTracking) {
+    await stopShortTermTracking();
+  } else {
+    await startShortTermTracking();
+  }
+}
+
+async function startShortTermTracking() {
+  if (!selectedTicker) return;
+  const ticker = selectedTicker.toUpperCase();
+  els.shortTermTrackButton.disabled = true;
+  els.shortTermStatus.textContent = "Starting";
+  try {
+    const data = await api(`/api/ticker/${ticker}/short-term/start`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({window: Number(els.shortTermWindow.value || 160)}),
+    });
+    if (ticker !== selectedTicker) return;
+    shortTermTracking = true;
+    shortTermTicker = ticker;
+    shortTermUnloadSent = false;
+    renderShortTerm(data);
+    scheduleShortTermPoll();
+  } catch (error) {
+    shortTermTracking = false;
+    shortTermTicker = ticker;
+    renderShortTerm({ticker, tracking: false, points: [], error: error.message});
+  } finally {
+    els.shortTermTrackButton.disabled = !selectedTicker;
+  }
+}
+
+async function stopShortTermTracking({ticker = null, silent = false} = {}) {
+  window.clearTimeout(shortTermTimer);
+  shortTermTimer = null;
+  const target = String(ticker || shortTermTicker || selectedTicker || "").toUpperCase();
+  shortTermTracking = false;
+  shortTermTicker = null;
+  if (!target) {
+    if (!silent) resetShortTermPanel();
+    return;
+  }
+  try {
+    const data = await api(`/api/ticker/${target}/short-term/stop`, {method: "POST"});
+    if (!silent && (!selectedTicker || target === selectedTicker)) renderShortTerm(data);
+  } catch (error) {
+    if (!silent) renderShortTerm({ticker: target, tracking: false, points: [], error: error.message});
+  }
+  if (!silent) resetShortTermPanel();
+}
+
+function releaseShortTermTrackingOnPageExit() {
+  if (!shortTermTracking || !shortTermTicker || shortTermUnloadSent) return;
+  const target = shortTermTicker.toUpperCase();
+  shortTermUnloadSent = true;
+  window.clearTimeout(shortTermTimer);
+  shortTermTimer = null;
+  shortTermTracking = false;
+  shortTermTicker = null;
+  const url = `/api/ticker/${encodeURIComponent(target)}/short-term/stop`;
+  if (navigator.sendBeacon) {
+    const sent = navigator.sendBeacon(url, new Blob([], {type: "text/plain"}));
+    if (sent) return;
+  }
+  try {
+    fetch(url, {method: "POST", keepalive: true}).catch(() => {});
+  } catch (error) {
+    // Best-effort cleanup during page unload.
+  }
+}
+
+async function loadShortTermSnapshot() {
+  if (!selectedTicker || !shortTermTracking) {
+    resetShortTermPanel();
+    return;
+  }
+  const ticker = selectedTicker.toUpperCase();
+  try {
+    const data = await api(`/api/ticker/${ticker}/short-term?window=${encodeURIComponent(els.shortTermWindow.value || "160")}`);
+    if (ticker !== selectedTicker || ticker !== shortTermTicker) return;
+    renderShortTerm(data);
+  } catch (error) {
+    if (ticker !== selectedTicker) return;
+    renderShortTerm({ticker, tracking: true, points: [], error: error.message});
+  }
+}
+
+function scheduleShortTermPoll() {
+  window.clearTimeout(shortTermTimer);
+  if (!shortTermTracking) return;
+  shortTermTimer = window.setTimeout(async () => {
+    await loadShortTermSnapshot();
+    scheduleShortTermPoll();
+  }, SHORT_TERM_POLL_MS);
+}
+
+function resetShortTermPanel() {
+  window.clearTimeout(shortTermTimer);
+  if (!shortTermTracking) shortTermTimer = null;
+  els.shortTermTrackButton.disabled = !selectedTicker;
+  els.shortTermTrackButton.textContent = "Start Tracking";
+  els.shortTermStatus.textContent = selectedTicker ? "Tracking off" : "Select a ticker";
+  els.shortTermDecision.innerHTML = "";
+  els.shortTermRules.innerHTML = "";
+  els.shortTermMetrics.innerHTML = "";
+  els.shortTermChart.innerHTML = `<div class="empty">${selectedTicker ? "Tracking off" : "Select a ticker"}</div>`;
+  els.shortTermTape.innerHTML = "";
+}
+
+function renderShortTerm(data) {
+  const ticker = String(data?.ticker || selectedTicker || "").toUpperCase();
+  const points = Array.isArray(data?.points) ? data.points : [];
+  const indicators = data?.indicators || {};
+  shortTermTracking = Boolean(data?.tracking);
+  shortTermTicker = shortTermTracking ? ticker : null;
+  els.shortTermTrackButton.textContent = shortTermTracking ? "Stop Tracking" : "Start Tracking";
+  els.shortTermTrackButton.disabled = !selectedTicker;
+  if (data?.error) {
+    els.shortTermStatus.textContent = data.error;
+  } else if (shortTermTracking) {
+    const asOf = data.as_of ? formatShortTime(data.as_of) : "Waiting";
+    els.shortTermStatus.textContent = `${data.source_label || "Futu 1m K-line"} · ${asOf}`;
+  } else {
+    els.shortTermStatus.textContent = "Tracking off";
+  }
+  renderShortTermDecision(indicators, points, data?.error);
+  renderShortTermRules(indicators.signal?.rules || []);
+  renderShortTermMetrics(indicators, points);
+  renderShortTermChart(points, data?.error);
+  renderShortTermTape(points);
+}
+
+function renderShortTermDecision(indicators, points, error) {
+  if (error) {
+    els.shortTermDecision.innerHTML = "";
+    return;
+  }
+  if (!points.length) {
+    els.shortTermDecision.innerHTML = "";
+    return;
+  }
+  const signal = indicators.signal || {};
+  const bias = String(signal.bias || "neutral");
+  const summary = signal.summary || "中性：等待规则共振。";
+  const score = Number(signal.bias_score || 0);
+  els.shortTermDecision.innerHTML = `
+    <div class="shortterm-decision-card" data-bias="${escapeAttribute(bias)}">
+      <span>${escapeHtml(biasLabel(bias))}</span>
+      <strong>${escapeHtml(summary)}</strong>
+      <small>规则分 ${score >= 0 ? "+" : ""}${Number.isFinite(score) ? score : 0}</small>
+    </div>
+  `;
+}
+
+function renderShortTermRules(rules) {
+  const safeRules = Array.isArray(rules) ? rules : [];
+  if (!safeRules.length) {
+    els.shortTermRules.innerHTML = "";
+    return;
+  }
+  els.shortTermRules.innerHTML = safeRules
+    .map((rule) => {
+      const tip = `${rule.condition || ""} ${rule.conclusion || ""}`.trim();
+      return `
+        <div class="shortterm-rule has-hover-card" data-status="${escapeAttribute(rule.status || "watch")}" data-tip="${escapeAttribute(tip)}">
+          <span>${escapeHtml(rule.label || "-")}</span>
+          <strong>${escapeHtml(ruleStatusText(rule.status))}</strong>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function renderShortTermMetrics(indicators, points) {
+  if (!points.length) {
+    els.shortTermMetrics.innerHTML = "";
+    return;
+  }
+  const kdj = indicators.kdj || {};
+  const volume = indicators.volume || {};
+  const ema = indicators.ema || {};
+  const atr = indicators.atr || {};
+  const openingRange = indicators.opening_range || {};
+  const guide = indicatorGuideByLabel(indicators.indicator_guide);
+  const metrics = [
+    ["Price", priceText(indicators.price), signalLabel(indicators.signal?.label), "最新 1 分钟 K 线收盘价。"],
+    ["VWAP", priceText(indicators.vwap), pctText(indicators.vwap_deviation), hoverText(guide.VWAP)],
+    ["EMA9/21", `${priceBareText(ema.ema9)}/${priceBareText(ema.ema21)}`, stateLabel(ema.state), hoverText(guide["EMA9/21"])],
+    ["OR15", orText(openingRange), stateLabel(openingRange.state), hoverText(guide.OR15)],
+    ["RSI", numberText(indicators.rsi14), rsiLabel(indicators.rsi14), hoverText(guide["RSI/KDJ"])],
+    ["KDJ", `${numberText(kdj.k)}/${numberText(kdj.d)}/${numberText(kdj.j)}`, kdjMetricLabel(kdj), hoverText(guide["RSI/KDJ"])],
+    ["Volume", volumeRatioText(volume), volumeHelpText(volume), hoverText(guide["Volume z"])],
+    ["ATR1m", pctText(atr.atr_pct), stateLabel(atr.state), hoverText(guide.ATR1m)],
+    ["5m", pctText(indicators.return_5m), "return", "最近 5 分钟收益率，用 1 分钟收盘价滚动计算。"],
+    ["15m", pctText(indicators.return_15m), "return", "最近 15 分钟收益率，用 1 分钟收盘价滚动计算。"],
+  ];
+  els.shortTermMetrics.innerHTML = metrics
+    .map(
+      ([label, value, help, tip]) => `
+        <div class="shortterm-metric has-hover-card" data-tip="${escapeAttribute(tip || help || "")}">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+          <small>${escapeHtml(help || "")}</small>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function renderShortTermChart(points, error) {
+  const cleanPoints = points.filter((point) => Number.isFinite(Number(point.close)));
+  if (error) {
+    els.shortTermChart.innerHTML = `<div class="empty">${escapeHtml(error)}</div>`;
+    return;
+  }
+  if (cleanPoints.length < 2) {
+    els.shortTermChart.innerHTML = `<div class="empty">${shortTermTracking ? "Waiting for 1m data" : "Tracking off"}</div>`;
+    return;
+  }
+  const width = 820;
+  const height = 280;
+  const priceTop = 22;
+  const priceHeight = 172;
+  const volumeTop = 218;
+  const volumeHeight = 42;
+  const closes = cleanPoints.map((point) => Number(point.close));
+  const vwaps = cleanPoints.map((point) => Number(point.vwap)).filter((value) => Number.isFinite(value));
+  const volumes = cleanPoints.map((point) => Number(point.volume || 0));
+  const priceValues = closes.concat(vwaps);
+  const minClose = Math.min(...priceValues);
+  const maxClose = Math.max(...priceValues);
+  const priceSpan = maxClose - minClose || 1;
+  const maxVolume = Math.max(...volumes, 1);
+  const lastIndex = cleanPoints.length - 1;
+  const line = cleanPoints
+    .map((point, index) => {
+      const x = (index / lastIndex) * width;
+      const y = priceTop + (1 - (Number(point.close) - minClose) / priceSpan) * priceHeight;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  const vwapLine = cleanPoints
+    .filter((point) => Number.isFinite(Number(point.vwap)))
+    .map((point, index) => {
+      const sourceIndex = cleanPoints.indexOf(point);
+      const x = (sourceIndex / lastIndex) * width;
+      const y = priceTop + (1 - (Number(point.vwap) - minClose) / priceSpan) * priceHeight;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  const bars = cleanPoints
+    .map((point, index) => {
+      const x = (index / lastIndex) * width;
+      const barHeight = (Number(point.volume || 0) / maxVolume) * volumeHeight;
+      return `<rect x="${x.toFixed(1)}" y="${(volumeTop + volumeHeight - barHeight).toFixed(1)}" width="3" height="${barHeight.toFixed(1)}" />`;
+    })
+    .join("");
+  const latest = cleanPoints[cleanPoints.length - 1];
+  els.shortTermChart.innerHTML = `
+    <svg class="shortterm-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-label="1 minute price and volume">
+      <line class="shortterm-grid-line" x1="0" x2="${width}" y1="${priceTop + priceHeight}" y2="${priceTop + priceHeight}" />
+      ${vwapLine ? `<polyline class="shortterm-vwap-line" points="${vwapLine}" />` : ""}
+      <polyline class="shortterm-price-line" points="${line}" />
+      <g class="shortterm-volume-bars">${bars}</g>
+    </svg>
+    <div class="shortterm-chart-foot">
+      <span>${escapeHtml(cleanPoints[0].time || "")}</span>
+      <strong>${escapeHtml(priceText(latest.close))}</strong>
+      <span>${escapeHtml(latest.time || "")}</span>
+    </div>
+  `;
+}
+
+function renderShortTermTape(points) {
+  const rows = points.slice(-8).reverse();
+  if (!rows.length) {
+    els.shortTermTape.innerHTML = "";
+    return;
+  }
+  els.shortTermTape.innerHTML = rows
+    .map((point) => {
+      const index = points.indexOf(point);
+      const prev = index > 0 ? Number(points[index - 1].close) : NaN;
+      const current = Number(point.close);
+      const change = Number.isFinite(prev) && prev ? current / prev - 1 : null;
+      return `
+        <div class="shortterm-tape-row">
+          <span>${escapeHtml(shortTimeOnly(point.time))}</span>
+          <strong>${escapeHtml(priceText(point.close))}</strong>
+          <span>${escapeHtml(pctText(change))}</span>
+          <span>${escapeHtml(volumeText(point.volume))}</span>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function signalLabel(value) {
+  const label = String(value || "neutral");
+  const labels = {
+    overbought_volume: "过热放量",
+    oversold_reversal_watch: "超跌放量",
+    overbought: "超买",
+    oversold: "超卖",
+    volume_spike: "放量",
+    neutral: "中性",
+  };
+  return labels[label] || label.replaceAll("_", " ");
+}
+
+function biasLabel(value) {
+  const labels = {
+    strong_long_bias: "强多",
+    long_bias: "偏多",
+    neutral: "中性",
+    short_bias: "偏空",
+    strong_short_bias: "强空",
+  };
+  return labels[String(value || "neutral")] || "中性";
+}
+
+function ruleStatusText(value) {
+  const labels = {
+    pass: "满足",
+    fail: "不满足",
+    watch: "观察",
+    warn: "警惕",
+    pending: "等待",
+  };
+  return labels[String(value || "watch")] || "观察";
+}
+
+function stateLabel(value) {
+  const labels = {
+    bullish: "偏多",
+    bearish: "偏空",
+    mixed: "混杂",
+    above: "上方",
+    below: "下方",
+    inside: "区间内",
+    forming: "形成中",
+    compressed: "压缩",
+    tradable: "可做T",
+    wide: "偏大",
+    spike: "放量",
+    dry: "缩量",
+    normal: "正常",
+    unknown: "-",
+  };
+  return labels[String(value || "unknown")] || String(value || "-");
+}
+
+function indicatorGuideByLabel(items) {
+  const result = {};
+  for (const item of Array.isArray(items) ? items : []) {
+    result[item.label] = item;
+  }
+  return result;
+}
+
+function hoverText(item) {
+  if (!item) return "";
+  return `${item.meaning || ""} ${item.condition || ""}`.trim();
+}
+
+function kdjMetricLabel(kdj) {
+  const k = Number(kdj.k);
+  const d = Number(kdj.d);
+  const j = Number(kdj.j);
+  if (!Number.isFinite(k) || !Number.isFinite(d) || !Number.isFinite(j)) return "-";
+  if (k >= 80 && j >= 90) return "过热";
+  if (k <= 20 && j <= 10) return "过冷";
+  return k > d ? "拐头向上" : "拐头向下";
+}
+
+function volumeRatioText(volume) {
+  const ratio = Number(volume?.ratio);
+  if (!Number.isFinite(ratio)) return "-";
+  return `${ratio.toFixed(2)}x`;
+}
+
+function volumeHelpText(volume) {
+  const state = stateLabel(volume?.state);
+  const zscore = Number(volume?.zscore);
+  if (!Number.isFinite(zscore)) return state;
+  return `${state} · z ${zscore.toFixed(1)}`;
+}
+
+function orText(openingRange) {
+  const high = Number(openingRange?.high);
+  const low = Number(openingRange?.low);
+  if (!Number.isFinite(high) || !Number.isFinite(low)) return "-";
+  return `${priceBareText(low)}-${priceBareText(high)}`;
+}
+
+function priceText(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  return `$${number >= 100 ? number.toFixed(2) : number.toFixed(3)}`;
+}
+
+function priceBareText(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  return number >= 100 ? number.toFixed(2) : number.toFixed(3);
+}
+
+function pctText(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  return `${number >= 0 ? "+" : ""}${(number * 100).toFixed(2)}%`;
+}
+
+function volumeText(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  if (Math.abs(number) >= 1_000_000) return `${(number / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(number) >= 1_000) return `${(number / 1_000).toFixed(1)}K`;
+  return number.toFixed(0);
+}
+
+function shortTimeOnly(value) {
+  const text = String(value || "");
+  if (text.includes(" ")) return text.split(" ").pop().slice(0, 5);
+  if (text.includes("T")) return text.split("T").pop().slice(0, 5);
+  return text.slice(0, 5);
+}
+
 function setWatchState(watched) {
   selectedTickerWatched = watched;
   els.detailWatchButton.dataset.watched = watched ? "true" : "false";
@@ -1635,7 +2389,9 @@ els.navDetailsButton.addEventListener("click", async () => {
   await showWorkspaceView("details");
   focusPanel(".detail", els.rerunTickerButton);
 });
-els.navOpeningRadarButton.addEventListener("click", () => showWorkspaceView("opening-radar"));
+els.navOpeningRadarButton.addEventListener("click", () => openOpeningRadarView("today"));
+els.navOpeningTodayButton.addEventListener("click", () => openOpeningRadarView("today"));
+els.navOpeningTrendButton.addEventListener("click", () => openOpeningRadarView("trend"));
 els.navDataSourcesButton.addEventListener("click", () => showWorkspaceView("datasources"));
 els.openRunsButton.addEventListener("click", openQueueDrawer);
 els.closeScreeningDialog.addEventListener("click", closeScreeningDialog);
@@ -1644,12 +2400,20 @@ els.summaryButton.addEventListener("click", generateSummary);
 els.refreshButton.addEventListener("click", refreshAll);
 els.refreshOpeningRadarButton.addEventListener("click", () => loadOpeningRadar({force: true}));
 els.generateOpeningAdviceButton.addEventListener("click", generateOpeningAdvice);
+els.openingTodayTab.addEventListener("click", () => setOpeningRadarSubView("today"));
+els.openingLongTermTab.addEventListener("click", () => setOpeningRadarSubView("trend"));
+els.openingTrendIndex.addEventListener("change", () => loadOpeningLongTermTrend({force: true}));
+els.openingTrendTransform.addEventListener("change", () => loadOpeningLongTermTrend({force: true}));
+els.refreshOpeningTrendButton.addEventListener("click", () => loadOpeningLongTermTrend({force: true}));
+els.analyzeOpeningTrendButton.addEventListener("click", analyzeOpeningTrend);
 els.detailWatchButton.addEventListener("click", toggleWatch);
 els.rerunTickerButton.addEventListener("click", rerunTicker);
 els.refreshTimetableButton.addEventListener("click", refreshTimetableSources);
+els.shortTermTrackButton.addEventListener("click", toggleShortTermTracking);
 els.summaryTab.addEventListener("click", () => setDetailTab("summary"));
 els.truthTab.addEventListener("click", () => setDetailTab("truth"));
 els.timetableTab.addEventListener("click", () => setDetailTab("timetable"));
+els.shortTermTab.addEventListener("click", () => setDetailTab("shortterm"));
 els.chartTab.addEventListener("click", () => setDetailTab("chart"));
 els.workerState.addEventListener("click", openQueueDrawer);
 els.latestRun.addEventListener("click", openQueueDrawer);
@@ -1677,6 +2441,9 @@ els.sectorFilter.addEventListener("change", refreshAll);
 els.minScore.addEventListener("change", refreshAll);
 els.perSector.addEventListener("change", refreshAll);
 els.dimensionFilter.addEventListener("change", () => selectedTicker && loadTicker(selectedTicker));
+els.shortTermWindow.addEventListener("change", loadShortTermSnapshot);
+window.addEventListener("pagehide", releaseShortTermTrackingOnPageExit);
+window.addEventListener("beforeunload", releaseShortTermTrackingOnPageExit);
 
 hydrateTickerInput();
 showWorkspaceView("research");

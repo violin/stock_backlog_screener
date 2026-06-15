@@ -199,10 +199,11 @@ def fetch_nasdaq_price_trend(
     max_points: int = 420,
     from_date: str = "1990-01-01",
     to_date: str | None = None,
+    asset_class: str = "stocks",
 ) -> dict:
     clean_symbol = symbol.strip().upper()
     params = {
-        "assetclass": "stocks",
+        "assetclass": asset_class,
         "fromdate": from_date,
         "todate": to_date or date.today().isoformat(),
         "limit": "9999",

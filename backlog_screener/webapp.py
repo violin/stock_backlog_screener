@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import threading
 import json
+import math
+import socket
+import time
 from datetime import date, datetime
 from decimal import Decimal
 import re
@@ -12,6 +15,7 @@ from flask import Flask, jsonify, render_template, request
 from .datasources import DATA_SOURCE_DEFINITIONS, source_is_requested
 from .db import PostgresStore
 from .futu_provider import FutuProvider, futu_code
+from .intraday import intraday_payload
 from .llm import build_llm_client
 from .market_prep import ai_prompt, opening_radar_snapshot
 from .pipeline import HiddenChampionPipeline
@@ -29,6 +33,7 @@ def create_app(*, store: PostgresStore, settings: AppSettings) -> Flask:
         "queue": _empty_queue(),
     }
     lock = threading.Lock()
+    short_term_tracker = ShortTermTracker(settings)
 
     @app.get("/")
     def index():
@@ -150,6 +155,59 @@ def create_app(*, store: PostgresStore, settings: AppSettings) -> Flask:
         )
         return jsonify(_clean_json(_opening_radar_payload(report, store)))
 
+    @app.get("/api/opening-radar/long-term-trend")
+    def opening_radar_long_term_trend():
+        index_key = str(request.args.get("index") or "nasdaq").strip().lower()
+        transform = str(request.args.get("transform") or "raw").strip().lower()
+        max_points = max(120, min(1600, int(request.args.get("max_points") or 760)))
+        config = _opening_trend_index_config(index_key)
+        payload = _opening_long_term_trend_data(config, transform, max_points=max_points)
+        return jsonify(_clean_json(payload))
+
+    @app.post("/api/opening-radar/long-term-trend/analyze")
+    def opening_radar_long_term_trend_analyze():
+        provider_label = _llm_provider_label(settings)
+        client = build_llm_client(settings)
+        if client is None:
+            return jsonify({"error": f"{provider_label} API key is not configured."}), 400
+        if not hasattr(client, "complete_json"):
+            return jsonify({"error": f"{provider_label} does not support long-term trend JSON analysis yet."}), 400
+        payload = request.get_json(force=True, silent=True) or {}
+        index_key = str(payload.get("index") or "nasdaq").strip().lower()
+        transform = str(payload.get("transform") or "raw").strip().lower()
+        config = _opening_trend_index_config(index_key)
+        trend_payload = _opening_long_term_trend_data(config, transform, max_points=760)
+        if trend_payload.get("error") or len(trend_payload.get("points") or []) < 2:
+            return jsonify({"error": trend_payload.get("error") or "Not enough long term history."}), 400
+        prompt = _opening_trend_analysis_prompt(trend_payload)
+        system = (
+            "你是美股指数长期趋势和仓位风险顾问。你只能基于用户输入的指数点位、趋势残差和统计字段分析，"
+            "不得编造新闻、宏观数据或未提供的价格。输出必须是 JSON。"
+        )
+        try:
+            analysis = client.complete_json(system=system, user=prompt)
+        except Exception as exc:
+            response = getattr(exc, "response", None)
+            if response is not None:
+                detail = _llm_error_detail(response, provider_label)
+                status_code = 429 if response.status_code == 429 else 502
+            else:
+                detail = f"{provider_label} long-term trend analysis failed."
+                status_code = 502
+            return jsonify({"error": detail}), status_code
+        raw_response = str(analysis.pop("raw_response", "") or "")
+        analysis["provider"] = analysis.get("provider") or provider_label
+        return jsonify(
+            _clean_json(
+                {
+                    "provider": provider_label,
+                    "analysis": analysis,
+                    "prompt": prompt,
+                    "raw_response": raw_response,
+                }
+            )
+        )
+
     @app.get("/api/candidates/search")
     def search_candidates():
         query = (request.args.get("q") or "").strip()
@@ -238,6 +296,7 @@ def create_app(*, store: PostgresStore, settings: AppSettings) -> Flask:
         max_points = max(50, min(800, int(request.args.get("max_points", 420))))
         futu_error = ""
         try:
+            _assert_futu_opend_available(settings.futu_host, settings.futu_port)
             with FutuProvider(host=settings.futu_host, port=settings.futu_port, market=settings.futu_market) as provider:
                 trend = provider.price_trend(clean_ticker, max_points=max_points)
         except Exception as exc:
@@ -253,6 +312,25 @@ def create_app(*, store: PostgresStore, settings: AppSettings) -> Flask:
         if not _trend_has_points(trend):
             trend = _fallback_price_trend(clean_ticker, max_points=max_points, base_trend=trend, base_error=futu_error)
         return jsonify(_clean_json(trend))
+
+    @app.get("/api/ticker/<ticker>/short-term")
+    def ticker_short_term(ticker: str):
+        window = _short_term_window(request.args)
+        return jsonify(_clean_json(short_term_tracker.snapshot(ticker, window=window)))
+
+    @app.post("/api/ticker/<ticker>/short-term/start")
+    def start_ticker_short_term(ticker: str):
+        payload = request.get_json(force=True, silent=True) or {}
+        window = _short_term_window(payload)
+        try:
+            data = short_term_tracker.start(ticker, window=window)
+        except Exception as exc:
+            return jsonify({"error": _short_futu_error(str(exc))}), 502
+        return jsonify(_clean_json(data))
+
+    @app.post("/api/ticker/<ticker>/short-term/stop")
+    def stop_ticker_short_term(ticker: str):
+        return jsonify(_clean_json(short_term_tracker.stop(ticker)))
 
     @app.get("/api/ticker/<ticker>/summary")
     def ticker_summary(ticker: str):
@@ -467,6 +545,178 @@ def _futu_daily_history_fetcher(settings: AppSettings):
             return provider.history_kline(futu_code(symbol, settings.futu_market), days=260)
 
     return fetch
+
+
+class ShortTermTracker:
+    min_unsubscribe_seconds = 60
+
+    def __init__(self, settings: AppSettings):
+        self.settings = settings
+        self.lock = threading.Lock()
+        self.provider: FutuProvider | None = None
+        self.active: dict[str, dict[str, Any]] = {}
+        self.unsubscribe_timers: dict[str, threading.Timer] = {}
+
+    def start(self, ticker: str, *, window: int = 160) -> dict[str, Any]:
+        clean_ticker = _clean_ticker(ticker)
+        with self.lock:
+            timer = self.unsubscribe_timers.pop(clean_ticker, None)
+            if timer is not None:
+                timer.cancel()
+            provider = self._provider_locked()
+            code = provider.subscribe_minute_kline(clean_ticker, session="ALL")
+            now = datetime.now()
+            existing = self.active.get(clean_ticker) or {}
+            was_tracking = bool(existing.get("tracking"))
+            self.active[clean_ticker] = {
+                "tracking": True,
+                "code": code,
+                "active_since": existing.get("active_since") if was_tracking else now.isoformat(timespec="seconds"),
+                "started_monotonic": existing.get("started_monotonic") if was_tracking else time.monotonic(),
+                "last_error": None,
+            }
+        return self.snapshot(clean_ticker, window=window)
+
+    def stop(self, ticker: str) -> dict[str, Any]:
+        clean_ticker = _clean_ticker(ticker)
+        with self.lock:
+            active = self.active.get(clean_ticker) or {}
+            was_tracking = bool(active.get("tracking"))
+            active["tracking"] = False
+            error = None
+            provider = self.provider
+            if was_tracking and provider is not None and active.get("code"):
+                elapsed = time.monotonic() - float(active.get("started_monotonic") or 0)
+                if elapsed < self.min_unsubscribe_seconds:
+                    self._schedule_unsubscribe_locked(clean_ticker, delay=self.min_unsubscribe_seconds - elapsed + 1)
+                else:
+                    try:
+                        provider.unsubscribe_minute_kline(clean_ticker)
+                    except Exception as exc:
+                        error = _short_futu_error(str(exc))
+            active["last_error"] = error
+            self.active[clean_ticker] = active
+        return intraday_payload(
+            ticker=clean_ticker,
+            code=active.get("code"),
+            rows=[],
+            tracking=False,
+            active_since=active.get("active_since"),
+            error=error,
+        )
+
+    def snapshot(self, ticker: str, *, window: int = 160) -> dict[str, Any]:
+        clean_ticker = _clean_ticker(ticker)
+        with self.lock:
+            active = self.active.get(clean_ticker) or {}
+            if not active.get("tracking"):
+                return intraday_payload(
+                    ticker=clean_ticker,
+                    code=active.get("code") or futu_code(clean_ticker, self.settings.futu_market),
+                    rows=[],
+                    tracking=False,
+                    active_since=active.get("active_since"),
+                    error=active.get("last_error"),
+                )
+            provider = self._provider_locked()
+            try:
+                code, rows = provider.current_minute_kline(clean_ticker, num=window)
+            except Exception as exc:
+                error = _short_futu_error(str(exc))
+                active["last_error"] = error
+                self.active[clean_ticker] = active
+                return intraday_payload(
+                    ticker=clean_ticker,
+                    code=active.get("code") or futu_code(clean_ticker, self.settings.futu_market),
+                    rows=[],
+                    tracking=True,
+                    active_since=active.get("active_since"),
+                    error=error,
+                )
+            active["code"] = code
+            active["last_error"] = None
+            self.active[clean_ticker] = active
+        return intraday_payload(
+            ticker=clean_ticker,
+            code=code,
+            rows=rows,
+            tracking=True,
+            active_since=active.get("active_since"),
+        )
+
+    def _provider_locked(self) -> FutuProvider:
+        if self.provider is None:
+            _assert_futu_opend_available(self.settings.futu_host, self.settings.futu_port)
+            self.provider = FutuProvider(
+                host=self.settings.futu_host,
+                port=self.settings.futu_port,
+                market=self.settings.futu_market,
+            )
+        return self.provider
+
+    def _schedule_unsubscribe_locked(self, ticker: str, *, delay: float) -> None:
+        existing = self.unsubscribe_timers.pop(ticker, None)
+        if existing is not None:
+            existing.cancel()
+        timer = threading.Timer(max(1.0, delay), self._delayed_unsubscribe, args=(ticker,))
+        timer.daemon = True
+        self.unsubscribe_timers[ticker] = timer
+        timer.start()
+
+    def _delayed_unsubscribe(self, ticker: str) -> None:
+        with self.lock:
+            self.unsubscribe_timers.pop(ticker, None)
+            active = self.active.get(ticker) or {}
+            if active.get("tracking"):
+                return
+            provider = self.provider
+            if provider is None or not active.get("code"):
+                return
+            error = None
+            try:
+                provider.unsubscribe_minute_kline(ticker)
+            except Exception as exc:
+                error = _short_futu_error(str(exc))
+            active["last_error"] = error
+            self.active[ticker] = active
+
+
+def _short_term_window(values: Any) -> int:
+    raw = values.get("window", 160) if hasattr(values, "get") else 160
+    try:
+        value = int(raw or 160)
+    except (TypeError, ValueError):
+        value = 160
+    return max(40, min(360, value))
+
+
+def _clean_ticker(ticker: str) -> str:
+    clean = str(ticker or "").strip().upper()
+    if "." in clean:
+        clean = clean.split(".", 1)[1]
+    return clean
+
+
+def _short_futu_error(message: str) -> str:
+    clean = str(message or "").strip()
+    if not clean:
+        return "Futu OpenD unavailable."
+    lower = clean.lower()
+    if "no right" in lower or "permission" in lower:
+        return "No Futu quote right for this symbol."
+    if "connect" in lower or "connection" in lower or "opend" in lower:
+        return "Futu OpenD connection unavailable."
+    if "quota" in lower:
+        return "Futu quote quota unavailable."
+    return clean[:160]
+
+
+def _assert_futu_opend_available(host: str, port: int) -> None:
+    try:
+        with socket.create_connection((host, int(port)), timeout=0.45):
+            return
+    except OSError as exc:
+        raise RuntimeError("Futu OpenD connection unavailable.") from exc
 
 
 def _parse_market_cap_range(condition: str) -> tuple[float, float]:
@@ -747,6 +997,266 @@ def _dimension_monitor_label(dimension: str) -> str:
 def _trend_has_points(trend: dict[str, Any]) -> bool:
     points = trend.get("points") if isinstance(trend, dict) else []
     return isinstance(points, list) and len(points) >= 2
+
+
+def _opening_trend_index_config(index_key: str) -> dict[str, str]:
+    configs = {
+        "nasdaq": {
+            "key": "nasdaq",
+            "symbol": "^IXIC",
+            "nasdaq_symbol": "COMP",
+            "label": "Nasdaq Composite",
+            "short_label": "Nasdaq",
+        },
+        "sox": {
+            "key": "sox",
+            "symbol": "^SOX",
+            "nasdaq_symbol": "SOX",
+            "label": "PHLX Semiconductor",
+            "short_label": "SOX",
+        },
+        "semiconductor": {
+            "key": "sox",
+            "symbol": "^SOX",
+            "nasdaq_symbol": "SOX",
+            "label": "PHLX Semiconductor",
+            "short_label": "SOX",
+        },
+    }
+    return configs.get(index_key, configs["nasdaq"])
+
+
+def _opening_trend_fallback(config: dict[str, str], *, max_points: int, base_error: str = "") -> dict[str, Any]:
+    try:
+        fallback = fetch_nasdaq_price_trend(
+            config.get("nasdaq_symbol") or config["symbol"],
+            max_points=max_points,
+            from_date="1970-01-01",
+            asset_class="index",
+        )
+    except Exception as exc:
+        return {
+            "ticker": config["symbol"],
+            "source": "nasdaq",
+            "source_label": "Nasdaq daily close",
+            "period": "max",
+            "points": [],
+            "error": "; ".join(part for part in [base_error, _short_trend_error(str(exc))] if part),
+        }
+    fallback["source_label"] = "Nasdaq index daily close"
+    if base_error:
+        fallback["fallback_from"] = "yfinance"
+        fallback["fallback_error"] = base_error
+    return fallback
+
+
+def _opening_long_term_trend_data(config: dict[str, str], transform: str, *, max_points: int) -> dict[str, Any]:
+    try:
+        trend = fetch_price_trend(config["symbol"], period="max", max_points=max_points)
+    except Exception as exc:
+        trend = _opening_trend_fallback(config, max_points=max_points, base_error=_short_trend_error(str(exc)))
+    if not _trend_has_points(trend):
+        trend = _opening_trend_fallback(config, max_points=max_points, base_error=_short_trend_error(str(trend.get("error") or "")))
+    return _opening_long_term_trend_payload(config, trend, transform)
+
+
+def _opening_trend_transform_meta(transform: str) -> dict[str, str]:
+    metas = {
+        "raw": {
+            "key": "raw",
+            "label": "Raw Index",
+            "unit": "points",
+            "explanation_zh": "原始指数点位保留真实价格水平，但长期复利会让曲线越来越陡。",
+        },
+        "log": {
+            "key": "log",
+            "label": "Log Index",
+            "unit": "ln(points)",
+            "explanation_zh": "对指数取自然对数后，稳定复利增长会接近直线，更适合观察长期趋势斜率是否变化。",
+        },
+        "detrended": {
+            "key": "detrended",
+            "label": "Trend Gap",
+            "unit": "percent",
+            "explanation_zh": "先对 ln(index) 做线性回归，再显示 exp(残差)-1。高于 0 表示指数高于长期复利趋势线，低于 0 表示低于趋势线。",
+        },
+    }
+    return metas.get(transform, metas["raw"])
+
+
+def _opening_long_term_trend_payload(config: dict[str, str], trend: dict[str, Any], transform: str) -> dict[str, Any]:
+    raw_points = []
+    for point in trend.get("points") or []:
+        close = _safe_float(point.get("close"))
+        if close is None or close <= 0:
+            continue
+        raw_points.append({"date": point.get("date"), "close": close})
+    transformed, regression = _opening_trend_transform_points(raw_points, transform)
+    first = raw_points[0] if raw_points else None
+    latest = raw_points[-1] if raw_points else None
+    total_return = None
+    cagr = None
+    if first and latest and first.get("close") not in (None, 0):
+        total_return = (latest["close"] - first["close"]) / abs(first["close"])
+        years = _date_span_years(first.get("date"), latest.get("date"))
+        if years and years > 0:
+            cagr = (latest["close"] / first["close"]) ** (1 / years) - 1
+    payload = {
+        **config,
+        "source": trend.get("source") or "yfinance",
+        "source_label": trend.get("source_label") or "Yahoo/yFinance daily close",
+        "period": trend.get("period") or "max",
+        "transform": _opening_trend_transform_meta(transform),
+        "points": transformed,
+        "point_count": len(transformed),
+        "first_date": first.get("date") if first else None,
+        "latest_date": latest.get("date") if latest else None,
+        "first_close": first.get("close") if first else None,
+        "latest_close": latest.get("close") if latest else None,
+        "total_return": total_return,
+        "cagr": cagr,
+        "regression": regression,
+    }
+    if trend.get("error"):
+        payload["error"] = trend.get("error")
+    if len(transformed) < 2:
+        payload["error"] = payload.get("error") or "Not enough long term history."
+    return payload
+
+
+def _opening_trend_analysis_prompt(trend: dict[str, Any]) -> str:
+    points = trend.get("points") or []
+    compact_points = [
+        {
+            "date": point.get("date"),
+            "close": _round_number(point.get("close"), 2),
+            "value": _round_number(point.get("value"), 6),
+            "trend_gap_pct": _round_number((point.get("value") or 0) * 100, 2)
+            if (trend.get("transform") or {}).get("key") == "detrended"
+            else None,
+        }
+        for point in points
+    ]
+    latest = points[-1] if points else {}
+    payload = {
+        "index": {
+            "symbol": trend.get("symbol"),
+            "label": trend.get("label"),
+            "source": trend.get("source_label") or trend.get("source"),
+        },
+        "view": trend.get("transform"),
+        "range": {
+            "first_date": trend.get("first_date"),
+            "latest_date": trend.get("latest_date"),
+            "point_count": trend.get("point_count"),
+        },
+        "current": {
+            "date": latest.get("date"),
+            "close": _round_number(latest.get("close"), 2),
+            "value": _round_number(latest.get("value"), 6),
+            "trend_gap_pct": _round_number((latest.get("value") or 0) * 100, 2)
+            if (trend.get("transform") or {}).get("key") == "detrended"
+            else None,
+        },
+        "stats": {
+            "total_return": trend.get("total_return"),
+            "cagr": trend.get("cagr"),
+            "regression": trend.get("regression"),
+        },
+        "points": compact_points,
+    }
+    return (
+        "请分析当前指数长期趋势图的风险和机会。重点判断当前点位相对长期趋势的位置、"
+        "潜在均值回归风险、顺势机会、需要观察的价格/趋势信号。不要使用输入外的新闻或宏观事实。\n\n"
+        "只输出 JSON，字段如下：\n"
+        "{\n"
+        '  "current_read": "中文，2-4句，说明当前状态和含义",\n'
+        '  "risks": ["中文，每条可执行/可观察"],\n'
+        '  "opportunities": ["中文，每条可执行/可观察"],\n'
+        '  "watch_levels": ["中文，结合当前点位或趋势gap给观察位"],\n'
+        '  "action_notes": ["中文，仓位/节奏建议，不要给保证性结论"],\n'
+        '  "confidence_score": 0-100\n'
+        "}\n\n"
+        f"输入数据：\n{json.dumps(_clean_json(payload), ensure_ascii=False, separators=(',', ':'))}"
+    )
+
+
+def _round_number(value: Any, digits: int) -> float | None:
+    number = _safe_float(value)
+    if number is None:
+        return None
+    return round(number, digits)
+
+
+def _opening_trend_transform_points(points: list[dict[str, Any]], transform: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    meta = _opening_trend_transform_meta(transform)
+    log_values = [math.log(float(point["close"])) for point in points if _safe_float(point.get("close"))]
+    regression = _linear_regression(log_values)
+    result = []
+    for index, point in enumerate(points):
+        close = float(point["close"])
+        log_close = math.log(close)
+        trend_log = regression["intercept"] + regression["slope"] * index if regression else log_close
+        if meta["key"] == "log":
+            value = log_close
+        elif meta["key"] == "detrended":
+            value = math.exp(log_close - trend_log) - 1
+        else:
+            value = close
+        result.append(
+            {
+                "date": point.get("date"),
+                "close": close,
+                "value": value,
+                "log_close": log_close,
+                "trend_log": trend_log,
+            }
+        )
+    return result, regression
+
+
+def _linear_regression(values: list[float]) -> dict[str, float]:
+    if not values:
+        return {"slope": 0.0, "intercept": 0.0, "r2": 0.0}
+    if len(values) == 1:
+        return {"slope": 0.0, "intercept": values[0], "r2": 1.0}
+    n = len(values)
+    mean_x = (n - 1) / 2
+    mean_y = sum(values) / n
+    numerator = sum((index - mean_x) * (value - mean_y) for index, value in enumerate(values))
+    denominator = sum((index - mean_x) ** 2 for index in range(n))
+    slope = numerator / denominator if denominator else 0.0
+    intercept = mean_y - slope * mean_x
+    total = sum((value - mean_y) ** 2 for value in values)
+    residual = sum((value - (intercept + slope * index)) ** 2 for index, value in enumerate(values))
+    r2 = 1 - residual / total if total else 1.0
+    return {"slope": slope, "intercept": intercept, "r2": r2}
+
+
+def _safe_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = value.strip().replace(",", "").replace("$", "").replace("%", "")
+        if not value or value.lower() in {"nan", "none", "n/a", "--"}:
+            return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(number) or math.isinf(number):
+        return None
+    return number
+
+
+def _date_span_years(start: Any, end: Any) -> float | None:
+    try:
+        start_date = datetime.fromisoformat(str(start)).date()
+        end_date = datetime.fromisoformat(str(end)).date()
+    except Exception:
+        return None
+    days = (end_date - start_date).days
+    return days / 365.25 if days > 0 else None
 
 
 def _fallback_price_trend(

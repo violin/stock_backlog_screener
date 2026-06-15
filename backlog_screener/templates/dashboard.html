@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Code-Beta</title>
-    <link rel="stylesheet" href="/static/app.css?v=20260607f" />
+    <link rel="stylesheet" href="/static/app.css?v=20260611h" />
   </head>
   <body>
     <main class="shell">
@@ -39,7 +39,13 @@
         </div>
         <nav class="workspace-menu" aria-label="Workspace menu">
           <button id="openScreeningButton" class="nav-link active" type="button">Screening</button>
-          <button id="navOpeningRadarButton" class="nav-link" type="button">Opening Radar</button>
+          <div class="nav-dropdown">
+            <button id="navOpeningRadarButton" class="nav-link nav-dropdown-trigger" type="button" aria-haspopup="true" aria-expanded="false">Opening Radar</button>
+            <div class="nav-dropdown-menu" role="menu" aria-label="Opening Radar views">
+              <button id="navOpeningTodayButton" type="button" role="menuitem">Today Summary</button>
+              <button id="navOpeningTrendButton" type="button" role="menuitem">Long Term Trend</button>
+            </div>
+          </div>
           <button id="navPoolsButton" class="nav-link" type="button">Candidates</button>
           <button id="navDetailsButton" class="nav-link" type="button">Details</button>
           <button id="navDataSourcesButton" class="nav-link" type="button">Datasources</button>
@@ -118,6 +124,7 @@
                     <button id="summaryTab" class="detail-tab active" type="button">AI Summary</button>
                     <button id="truthTab" class="detail-tab" type="button">Truth</button>
                     <button id="timetableTab" class="detail-tab" type="button">Timetable</button>
+                    <button id="shortTermTab" class="detail-tab" type="button">Short-Term</button>
                     <button id="chartTab" class="detail-tab" type="button">Chart</button>
                   </div>
                   <label class="mini-field dimension-filter">
@@ -194,6 +201,32 @@
             </div>
             <div id="futureTimeline" class="future-timeline"></div>
           </div>
+          <div id="shortTermPanel" class="detail-panel shortterm-panel">
+            <div class="tab-toolbar shortterm-toolbar">
+              <div>
+                <strong>Short-Term</strong>
+                <span id="shortTermStatus">Tracking off</span>
+              </div>
+              <div class="shortterm-actions">
+                <label class="mini-field shortterm-window-field">
+                  <span>Window</span>
+                  <select id="shortTermWindow">
+                    <option value="120">120m</option>
+                    <option value="160" selected>160m</option>
+                    <option value="240">240m</option>
+                  </select>
+                </label>
+                <button id="shortTermTrackButton" class="summary-action-button" type="button">Start Tracking</button>
+              </div>
+            </div>
+            <div id="shortTermDecision" class="shortterm-decision"></div>
+            <div id="shortTermRules" class="shortterm-rules"></div>
+            <div id="shortTermMetrics" class="shortterm-metrics"></div>
+            <div id="shortTermChart" class="shortterm-chart">
+              <div class="empty">Select a ticker</div>
+            </div>
+            <div id="shortTermTape" class="shortterm-tape"></div>
+          </div>
           <div id="chartPanel" class="detail-panel chart-panel">
             <div class="tradingview-head">
               <strong>TradingView</strong>
@@ -227,7 +260,11 @@
             <button id="generateOpeningAdviceButton" class="summary-action-button" type="button">AI Prep</button>
           </div>
         </div>
-        <div class="opening-radar-layout">
+        <div class="opening-radar-subnav detail-tabs" role="tablist" aria-label="Opening Radar views">
+          <button id="openingTodayTab" class="detail-tab active" type="button" role="tab">Today Summary</button>
+          <button id="openingLongTermTab" class="detail-tab" type="button" role="tab">Long Term Trend</button>
+        </div>
+        <div id="openingTodayPanel" class="opening-radar-layout">
           <section>
             <div id="openingRadarPrimary" class="opening-radar-stack"></div>
             <div class="sector-radar-shell">
@@ -246,6 +283,64 @@
             </div>
           </aside>
         </div>
+        <section id="openingTrendPanel" class="opening-trend-panel" hidden>
+          <div class="opening-trend-toolbar">
+            <label class="mini-field">
+              <span>Index</span>
+              <select id="openingTrendIndex">
+                <option value="nasdaq">Nasdaq Composite</option>
+                <option value="sox">PHLX Semiconductor</option>
+              </select>
+            </label>
+            <label class="mini-field">
+              <span>View</span>
+              <select id="openingTrendTransform">
+                <option value="raw">Raw Index</option>
+                <option value="log">Log Index</option>
+                <option value="detrended">Trend Gap</option>
+              </select>
+            </label>
+            <button id="refreshOpeningTrendButton" class="ghost-button" type="button">Refresh</button>
+            <span id="openingTrendStatus">Select a view</span>
+          </div>
+          <div class="opening-trend-grid">
+            <article class="opening-trend-card">
+              <div class="opening-trend-card-head">
+                <div>
+                  <p id="openingTrendKicker">Long Term Trend</p>
+                  <h3 id="openingTrendTitle">Nasdaq Composite</h3>
+                </div>
+                <strong id="openingTrendLatest">-</strong>
+              </div>
+              <div id="openingTrendChart" class="opening-trend-chart">
+                <div class="empty">Choose an index</div>
+              </div>
+              <div class="opening-trend-foot">
+                <span id="openingTrendRange">-</span>
+                <span id="openingTrendSource">-</span>
+              </div>
+            </article>
+            <aside class="opening-trend-stats">
+              <div id="openingTrendStats" class="opening-trend-stat-grid"></div>
+              <div id="openingTrendExplain" class="opening-trend-explain">
+                <strong>How to read</strong>
+                <p>Log view turns stable compounding into a near-straight line. Trend Gap shows how far the index is above or below its long-term log trend.</p>
+              </div>
+              <div class="opening-trend-ai">
+                <div class="opening-trend-ai-head">
+                  <div>
+                    <strong>MiniMax AI</strong>
+                    <span id="openingTrendAnalysisMeta">Manual analyze</span>
+                  </div>
+                  <button id="analyzeOpeningTrendButton" class="summary-action-button" type="button">Analyze</button>
+                </div>
+                <div id="openingTrendAnalysisBody" class="opening-trend-analysis-body">
+                  <div class="empty">Analyze current trend points for risk and opportunity.</div>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </section>
       </section>
     </main>
 
@@ -368,6 +463,6 @@
         <div id="queueFailed" class="queue-list muted">None</div>
       </details>
     </aside>
-    <script src="/static/app.js?v=20260607f"></script>
+    <script src="/static/app.js?v=20260611h"></script>
   </body>
 </html>

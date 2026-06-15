@@ -181,6 +181,55 @@ class FutuProvider(AbstractContextManager["FutuProvider"]):
         rows = [_clean_record(record) for record in data.to_dict(orient="records")]
         return rows[-max(1, int(days)) :]
 
+    def subscribe_minute_kline(self, ticker: str, *, session: str = "ALL") -> str:
+        from futu import Session, SubType
+
+        code = futu_code(ticker, self.market)
+        session_value = getattr(Session, session.upper(), Session.ALL)
+        try:
+            ret, data = self.quote_ctx.subscribe(
+                [code],
+                [SubType.K_1M],
+                is_first_push=True,
+                subscribe_push=True,
+                session=session_value,
+            )
+        except TypeError:
+            ret, data = self.quote_ctx.subscribe(
+                [code],
+                [SubType.K_1M],
+                is_first_push=True,
+                subscribe_push=True,
+            )
+        if ret != self._ret_ok:
+            raise RuntimeError(str(data))
+        return code
+
+    def unsubscribe_minute_kline(self, ticker: str) -> None:
+        from futu import SubType
+
+        code = futu_code(ticker, self.market)
+        ret, data = self.quote_ctx.unsubscribe([code], [SubType.K_1M])
+        if ret != self._ret_ok:
+            raise RuntimeError(str(data))
+
+    def current_minute_kline(self, ticker: str, *, num: int = 160) -> tuple[str, list[dict]]:
+        from futu import AuType, SubType
+
+        code = futu_code(ticker, self.market)
+        count = max(20, min(1000, int(num)))
+        ret, data = self.quote_ctx.get_cur_kline(
+            code,
+            count,
+            SubType.K_1M,
+            AuType.QFQ,
+        )
+        if ret != self._ret_ok:
+            raise RuntimeError(str(data))
+        if data is None or data.empty:
+            return code, []
+        return code, [_clean_record(record) for record in data.to_dict(orient="records")]
+
     def price_trend(self, ticker: str, *, max_points: int = 420) -> dict:
         from futu import AuType, KLType
 
