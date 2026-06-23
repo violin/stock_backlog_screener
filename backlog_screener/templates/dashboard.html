@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Code-Beta</title>
-    <link rel="stylesheet" href="/static/app.css?v=20260611h" />
+    <link rel="stylesheet" href="/static/app.css?v=20260623c" />
   </head>
   <body>
     <main class="shell">
@@ -44,6 +44,13 @@
             <div class="nav-dropdown-menu" role="menu" aria-label="Opening Radar views">
               <button id="navOpeningTodayButton" type="button" role="menuitem">Today Summary</button>
               <button id="navOpeningTrendButton" type="button" role="menuitem">Long Term Trend</button>
+            </div>
+          </div>
+          <div class="nav-dropdown">
+            <button id="navTradingButton" class="nav-link nav-dropdown-trigger" type="button" aria-haspopup="true" aria-expanded="false">Trading</button>
+            <div class="nav-dropdown-menu" role="menu" aria-label="Trading views">
+              <button id="navTradingSimulateButton" type="button" role="menuitem">Simulate</button>
+              <button id="navTradingRealButton" type="button" role="menuitem" disabled>Real</button>
             </div>
           </div>
           <button id="navPoolsButton" class="nav-link" type="button">Candidates</button>
@@ -342,6 +349,305 @@
           </div>
         </section>
       </section>
+      <section id="tradingPage" class="panel trading-page" hidden>
+        <div class="panel-head trading-head">
+          <div>
+            <p class="eyebrow">Trading</p>
+            <h2>Simulate</h2>
+          </div>
+          <div class="trading-head-actions">
+            <span id="tradingStatus" title="Simulated orders only. No real broker orders are sent.">Sim only</span>
+            <button id="toggleTradingFocusButton" class="ghost-button" type="button">Focus</button>
+            <button id="refreshTradingButton" class="ghost-button" type="button">Refresh</button>
+          </div>
+        </div>
+        <div class="trading-layout">
+          <aside class="trading-sidebar">
+            <section class="trading-create-card">
+              <div class="trading-create-head">
+                <strong>New Instance</strong>
+                <span>simulate</span>
+              </div>
+              <label class="mini-field">
+                <span>Name</span>
+                <input id="tradingNameInput" type="text" placeholder="TQQQ/SQQQ Pair" autocomplete="off" />
+              </label>
+              <label class="mini-field">
+                <span>Pair</span>
+                <select id="tradingPairSelect">
+                  <option value="custom">Custom Pair</option>
+                </select>
+              </label>
+              <div class="trading-form-grid">
+                <label class="mini-field">
+                  <span>Signal Ticker</span>
+                  <input id="tradingSignalTickerInput" type="text" placeholder="TQQQ" autocomplete="off" />
+                </label>
+                <label class="mini-field">
+                  <span>Long Ticker</span>
+                  <input id="tradingLongTickerInput" type="text" placeholder="TQQQ" autocomplete="off" />
+                </label>
+                <label class="mini-field">
+                  <span>Bear Ticker</span>
+                  <input id="tradingShortTickerInput" type="text" placeholder="SQQQ" autocomplete="off" />
+                </label>
+              </div>
+              <div class="trading-form-grid two">
+                <label class="mini-field">
+                  <span>Capital / Leg</span>
+                  <input id="tradingNotionalInput" type="number" min="100" step="100" value="1000" />
+                </label>
+                <label class="mini-field">
+                  <span>Poll Seconds</span>
+                  <input id="tradingPollSecondsInput" type="number" min="1" max="300" step="1" value="5" />
+                </label>
+              </div>
+              <button id="createTradingInstanceButton" class="summary-action-button" type="button">Create Instance</button>
+            </section>
+            <div id="tradingInstanceList" class="trading-instance-list"></div>
+          </aside>
+          <section class="trading-detail">
+            <div class="trading-detail-head">
+              <div class="trading-active-title">
+                <span id="tradingActiveMode">SIMULATE</span>
+                <strong id="tradingActiveName">No instance</strong>
+                <small id="tradingActiveMeta">Create or select an instance</small>
+              </div>
+              <div class="trading-actions">
+                <button id="startTradingInstanceButton" class="summary-action-button" type="button" disabled>Start</button>
+                <button id="stopTradingInstanceButton" class="ghost-button" type="button" disabled>Stop</button>
+                <button id="deleteTradingInstanceButton" class="ghost-button danger-button" type="button" disabled>Delete</button>
+              </div>
+            </div>
+            <div id="tradingEmptyState" class="trading-empty-state">
+              <div class="empty">No simulation instance selected</div>
+            </div>
+            <div id="tradingDetailBody" class="trading-detail-body" hidden>
+              <section class="trading-strategy-control" aria-label="Research strategy">
+                <div class="trading-strategy-control-copy">
+                  <div class="trading-strategy-kicker">
+                    <span>RESEARCH STRATEGY</span>
+                    <button
+                      class="trading-info-button"
+                      type="button"
+                      aria-label="Show strategy details"
+                      title="Strategy rules and performance"
+                      popovertarget="tradingStrategyTip"
+                    >i</button>
+                  </div>
+                  <strong id="tradingStrategyLabel">Choose a strategy for this pair</strong>
+                  <small id="tradingStrategyDescription">Switch strategies here to compare the same ticker pair.</small>
+                </div>
+                <label class="mini-field">
+                  <span>Strategy</span>
+                  <select id="tradingDetailStrategySelect">
+                    <option value="rsi_extreme">RSI Extreme</option>
+                  </select>
+                </label>
+                <label class="mini-field">
+                  <span>Take Profit %</span>
+                  <input id="tradingDetailProfitTakeInput" type="number" min="0.1" max="100" step="0.1" value="4" />
+                </label>
+                <span id="tradingStrategySaveState" class="trading-strategy-save-state">Saved</span>
+                <div id="tradingStrategyTip" class="trading-tip-popover" popover>
+                  <div class="trading-tip-head">
+                    <div>
+                      <span>STRATEGY GUIDE</span>
+                      <strong>Rules & recent performance</strong>
+                    </div>
+                    <button
+                      class="trading-tip-close"
+                      type="button"
+                      aria-label="Close strategy details"
+                      popovertarget="tradingStrategyTip"
+                      popovertargetaction="hide"
+                    >Close</button>
+                  </div>
+                  <div id="tradingStrategyRules" class="trading-strategy-rules"></div>
+                  <div id="tradingStrategyPerformance" class="trading-strategy-performance"></div>
+                </div>
+              </section>
+              <div class="trading-detail-tabs" role="tablist" aria-label="Instance views">
+                <button id="tradingLiveTab" class="active" type="button" role="tab" aria-selected="true" aria-controls="tradingLivePanel">Live</button>
+                <button id="tradingBacktestTab" type="button" role="tab" aria-selected="false" aria-controls="tradingBacktestPanel">Backtest</button>
+              </div>
+              <div id="tradingLivePanel" class="trading-detail-panel trading-live-panel" role="tabpanel" aria-labelledby="tradingLiveTab">
+                <div id="tradingStrategyState" class="trading-strategy-state"></div>
+                <div id="tradingMetricGrid" class="trading-metric-grid"></div>
+                <div id="tradingQuoteStrip" class="trading-quote-strip"></div>
+                <div id="tradingPositionGrid" class="trading-position-grid"></div>
+                <div class="trading-chart-grid">
+                  <article class="trading-chart-card">
+                    <div class="trading-card-head">
+                      <strong>Price</strong>
+                      <span id="tradingPriceMeta">-</span>
+                    </div>
+                    <div id="tradingPriceChart" class="trading-chart"></div>
+                  </article>
+                  <article class="trading-chart-card">
+                    <div class="trading-card-head">
+                      <strong>RSI</strong>
+                      <span id="tradingRsiMeta">RSI(1) 3m avg</span>
+                    </div>
+                    <div id="tradingRsiChart" class="trading-chart rsi-chart"></div>
+                  </article>
+                </div>
+                <details class="trading-disclosure">
+                  <summary>
+                    <span>Activity & PnL</span>
+                    <small><b id="tradingEventCount">0</b> operations · <b id="tradingTradeCount">0</b> closed</small>
+                  </summary>
+                  <div class="trading-log-grid">
+                    <article class="trading-log-card">
+                      <div class="trading-card-head">
+                        <strong>Operations</strong>
+                        <span>Decision trail</span>
+                      </div>
+                      <div id="tradingEventLog" class="trading-event-log"></div>
+                    </article>
+                    <article class="trading-log-card">
+                      <div class="trading-card-head">
+                        <strong>Closed PnL</strong>
+                        <span>Completed trades</span>
+                      </div>
+                      <div id="tradingTradeLog" class="trading-trade-log"></div>
+                    </article>
+                  </div>
+                </details>
+              </div>
+              <div id="tradingBacktestPanel" class="trading-detail-panel trading-backtest-panel" role="tabpanel" aria-labelledby="tradingBacktestTab" hidden>
+                <section class="trading-backtest-card">
+                  <div class="trading-backtest-form">
+                    <label class="mini-field">
+                      <span>Start</span>
+                      <input id="tradingBacktestStart" type="datetime-local" />
+                    </label>
+                    <label class="mini-field">
+                      <span>End</span>
+                      <input id="tradingBacktestEnd" type="datetime-local" />
+                    </label>
+                    <button id="runTradingBacktestButton" class="summary-action-button" type="button">Run Backtest</button>
+                  </div>
+                  <section class="trading-backtest-overview">
+                    <div class="trading-section-head">
+                      <div>
+                        <span>PERIOD RESULT</span>
+                        <strong>Backtest overview</strong>
+                      </div>
+                      <button
+                        id="tradingBacktestMoreButton"
+                        class="trading-light-button"
+                        type="button"
+                        popovertarget="tradingBacktestPeriodTip"
+                        hidden
+                      >More stats</button>
+                    </div>
+                    <div id="tradingBacktestPeriodSummary" class="trading-backtest-period-summary">
+                      <div class="empty">Select a time range and run backtest</div>
+                    </div>
+                    <div id="tradingBacktestPeriodTip" class="trading-tip-popover" popover>
+                      <div class="trading-tip-head">
+                        <div>
+                          <span>PERIOD DETAILS</span>
+                          <strong>Range statistics</strong>
+                        </div>
+                        <button
+                          class="trading-tip-close"
+                          type="button"
+                          aria-label="Close period details"
+                          popovertarget="tradingBacktestPeriodTip"
+                          popovertargetaction="hide"
+                        >Close</button>
+                      </div>
+                      <div id="tradingBacktestPeriodDetails" class="trading-tip-metric-grid"></div>
+                    </div>
+                  </section>
+                  <section id="tradingBacktestDailySection" class="trading-backtest-daily-section" hidden>
+                    <div class="trading-card-head">
+                      <strong>Daily Results</strong>
+                      <span id="tradingBacktestDailyCount">0 days</span>
+                    </div>
+                    <div id="tradingBacktestDailyList" class="trading-backtest-daily-list"></div>
+                  </section>
+                  <section id="tradingBacktestDayDetail" class="trading-backtest-day-detail" hidden>
+                    <div class="trading-backtest-day-head">
+                      <div>
+                        <span>DAY DETAIL</span>
+                        <strong id="tradingBacktestSelectedDate">-</strong>
+                      </div>
+                      <div class="trading-backtest-day-actions">
+                        <small id="tradingBacktestSelectedOutcome">-</small>
+                        <button
+                          class="trading-info-button"
+                          type="button"
+                          aria-label="Show day details"
+                          title="Data range and source"
+                          popovertarget="tradingBacktestDayTip"
+                        >i</button>
+                      </div>
+                    </div>
+                    <div id="tradingBacktestSummary" class="trading-backtest-summary"></div>
+                    <div id="tradingBacktestDayTip" class="trading-tip-popover" popover>
+                      <div class="trading-tip-head">
+                        <div>
+                          <span>DAY FACTS</span>
+                          <strong>Data coverage</strong>
+                        </div>
+                        <button
+                          class="trading-tip-close"
+                          type="button"
+                          aria-label="Close day details"
+                          popovertarget="tradingBacktestDayTip"
+                          popovertargetaction="hide"
+                        >Close</button>
+                      </div>
+                      <div id="tradingBacktestDayFacts" class="trading-tip-metric-grid"></div>
+                    </div>
+                    <div class="trading-backtest-chart-grid">
+                      <article class="trading-chart-card">
+                        <div class="trading-card-head">
+                          <strong>Backtest Price</strong>
+                          <span id="tradingBacktestPriceMeta">-</span>
+                        </div>
+                        <div id="tradingBacktestPriceChart" class="trading-chart"></div>
+                      </article>
+                      <article class="trading-chart-card">
+                        <div class="trading-card-head">
+                          <strong>Backtest RSI</strong>
+                          <span id="tradingBacktestRsiMeta">-</span>
+                        </div>
+                        <div id="tradingBacktestRsiChart" class="trading-chart rsi-chart"></div>
+                      </article>
+                    </div>
+                    <details id="tradingBacktestAudit" class="trading-disclosure trading-audit-disclosure">
+                      <summary>
+                        <span>Audit trail</span>
+                        <small><b id="tradingBacktestOperationCount">0</b> operations · <b id="tradingBacktestTradeCount">0</b> closed</small>
+                      </summary>
+                      <div class="trading-backtest-grid">
+                        <article class="trading-log-card">
+                          <div class="trading-card-head">
+                            <strong>Backtest Operations</strong>
+                            <span>Signals and executions</span>
+                          </div>
+                          <div id="tradingBacktestOperations" class="trading-event-log"></div>
+                        </article>
+                        <article class="trading-log-card">
+                          <div class="trading-card-head">
+                            <strong>Backtest PnL</strong>
+                            <span>Closed positions</span>
+                          </div>
+                          <div id="tradingBacktestTrades" class="trading-trade-log"></div>
+                        </article>
+                      </div>
+                    </details>
+                  </section>
+                </section>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
     </main>
 
     <dialog id="screeningDialog" class="screening-dialog">
@@ -463,6 +769,7 @@
         <div id="queueFailed" class="queue-list muted">None</div>
       </details>
     </aside>
-    <script src="/static/app.js?v=20260611h"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <script src="/static/app.js?v=20260623c"></script>
   </body>
 </html>

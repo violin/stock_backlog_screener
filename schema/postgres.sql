@@ -150,3 +150,62 @@ create table if not exists opening_radar_reports (
 
 create index if not exists idx_opening_radar_reports_updated
     on opening_radar_reports (updated_at desc);
+
+create table if not exists trading_instances (
+    id text primary key,
+    name text not null default '',
+    mode text not null default 'simulate',
+    strategy_id text not null default '',
+    pair_id text not null default 'custom',
+    status text not null default 'idle',
+    signal_ticker text not null default '',
+    long_ticker text not null default '',
+    short_ticker text not null default '',
+    payload jsonb not null default '{}'::jsonb,
+    created_at text not null default '',
+    updated_at text not null default ''
+);
+
+create index if not exists idx_trading_instances_updated
+    on trading_instances (updated_at desc);
+
+create table if not exists trading_events (
+    instance_id text not null references trading_instances(id) on delete cascade,
+    event_id text not null,
+    event_time text not null default '',
+    event_type text not null default '',
+    severity text not null default '',
+    payload jsonb not null default '{}'::jsonb,
+    primary key (instance_id, event_id)
+);
+
+create index if not exists idx_trading_events_instance_time
+    on trading_events (instance_id, event_time desc);
+
+create table if not exists trading_trades (
+    instance_id text not null references trading_instances(id) on delete cascade,
+    trade_id text not null,
+    leg text not null default '',
+    ticker text not null default '',
+    entry_time text not null default '',
+    exit_time text not null default '',
+    pnl numeric not null default 0,
+    return_pct numeric not null default 0,
+    payload jsonb not null default '{}'::jsonb,
+    primary key (instance_id, trade_id)
+);
+
+create index if not exists idx_trading_trades_instance_exit
+    on trading_trades (instance_id, exit_time desc);
+
+create table if not exists trading_price_points (
+    instance_id text not null references trading_instances(id) on delete cascade,
+    point_index integer not null,
+    point_time text not null default '',
+    decision_index integer not null default 0,
+    payload jsonb not null default '{}'::jsonb,
+    primary key (instance_id, point_index)
+);
+
+create index if not exists idx_trading_price_points_instance_time
+    on trading_price_points (instance_id, point_time desc);

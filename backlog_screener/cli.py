@@ -4,7 +4,7 @@ import argparse
 import csv
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterable, List
 
@@ -18,6 +18,8 @@ from .sample_data import sample_metrics
 from .scoring import evaluate_candidate
 from .sec import BacklogScanner, SecClient
 from .settings import load_settings
+from .strategy_research import run_strategy_research, write_strategy_research_outputs
+from .strategy_batch import compare_strategy_research, write_strategy_batch_outputs
 from .yahoo import fetch_candidate_metrics, seed_yfinance_universe
 
 
@@ -42,6 +44,104 @@ def main(argv=None) -> int:
         store = PostgresStore(settings.database_url)
         store.ensure_schema()
         print(f"Initialized PostgreSQL schema: {settings.database_url}")
+        return 0
+
+    if args.command == "strategy-research":
+        rows = []
+        source = ""
+        if args.input_csv:
+            with Path(args.input_csv).open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            source = str(args.input_csv)
+        else:
+            settings = load_settings()
+            end = datetime.now()
+            start = end - timedelta(days=max(10, int(args.calendar_days)))
+            with FutuProvider(
+                host=settings.futu_host,
+                port=settings.futu_port,
+                market="US",
+            ) as provider:
+                _code, rows = provider.history_intraday_kline(
+                    args.ticker,
+                    start=start,
+                    end=end,
+                    subtype_name="K_1M",
+                    max_pages=max(1, int(args.max_pages)),
+                )
+            source = "Futu OpenD K_1M history"
+        if not rows:
+            parser.error("No intraday rows returned for strategy research.")
+        research = run_strategy_research(
+            rows,
+            ticker=args.ticker,
+            interval_minutes=args.interval_minutes,
+        )
+        stem = args.stem or f"{args.ticker.lower()}_strategy_research_{_timestamp()}"
+        files = write_strategy_research_outputs(
+            research,
+            output_dir=Path(args.output_dir),
+            stem=stem,
+        )
+        candidates = research.get("rule_mining", {}).get("candidates", [])
+        print(
+            f"Strategy research completed for {args.ticker.upper()}: "
+            f"{research.get('rows', 0)} bars, {len(research.get('dates') or [])} sessions, "
+            f"{len(candidates)} rule candidates."
+        )
+        print(f"Source: {source}")
+        for label, path in files.items():
+            print(f"{label}: {path}")
+        return 0
+
+    if args.command == "strategy-batch-research":
+        settings = load_settings()
+        end = datetime.now()
+        start = end - timedelta(days=max(10, int(args.calendar_days)))
+        research_by_ticker = {}
+        with FutuProvider(
+            host=settings.futu_host,
+            port=settings.futu_port,
+            market="US",
+        ) as provider:
+            for ticker in args.tickers:
+                _code, rows = provider.history_intraday_kline(
+                    ticker,
+                    start=start,
+                    end=end,
+                    subtype_name="K_1M",
+                    max_pages=max(1, int(args.max_pages)),
+                )
+                if not rows:
+                    print(f"Skipping {ticker.upper()}: no intraday rows.", file=sys.stderr)
+                    continue
+                research = run_strategy_research(
+                    rows,
+                    ticker=ticker,
+                    interval_minutes=args.interval_minutes,
+                    include_threshold_mining=False,
+                )
+                research_by_ticker[ticker.upper()] = research
+                ticker_stem = f"{args.stem or 'strategy_batch'}_{ticker.lower()}"
+                write_strategy_research_outputs(
+                    research,
+                    output_dir=Path(args.output_dir),
+                    stem=ticker_stem,
+                )
+                print(
+                    f"Completed {ticker.upper()}: {research.get('rows', 0)} bars, "
+                    f"{len(research.get('dates') or [])} sessions."
+                )
+        if not research_by_ticker:
+            parser.error("No ticker returned enough intraday data for batch research.")
+        comparison = compare_strategy_research(research_by_ticker)
+        files = write_strategy_batch_outputs(
+            comparison,
+            output_dir=Path(args.output_dir),
+            stem=args.stem or f"strategy_batch_{_timestamp()}",
+        )
+        for label, path in files.items():
+            print(f"{label}: {path}")
         return 0
 
     if args.command == "ingest":
@@ -167,6 +267,29 @@ def build_parser() -> argparse.ArgumentParser:
     _add_output_args(sample)
 
     subparsers.add_parser("init-db", help="Create or update the PostgreSQL schema.")
+
+    strategy_research = subparsers.add_parser(
+        "strategy-research",
+        help="Build 3-minute features, turning zones, and transparent rule candidates for one ticker.",
+    )
+    strategy_research.add_argument("--ticker", required=True, help="Signal ticker, for example CRDO.")
+    strategy_research.add_argument("--input-csv", help="Optional cached 1-minute OHLCV CSV instead of a live Futu read.")
+    strategy_research.add_argument("--calendar-days", type=int, default=120, help="Calendar history requested from Futu.")
+    strategy_research.add_argument("--max-pages", type=int, default=50, help="Maximum Futu history pages.")
+    strategy_research.add_argument("--interval-minutes", type=int, default=3, help="Research bar interval.")
+    strategy_research.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
+    strategy_research.add_argument("--stem", default=None)
+
+    strategy_batch = subparsers.add_parser(
+        "strategy-batch-research",
+        help="Research the same industry strategy families across multiple tickers and compare transferability.",
+    )
+    strategy_batch.add_argument("--tickers", nargs="+", required=True, help="Signal tickers, for example CRDO SPCX AAOI.")
+    strategy_batch.add_argument("--calendar-days", type=int, default=120, help="Calendar history requested from Futu.")
+    strategy_batch.add_argument("--max-pages", type=int, default=50, help="Maximum Futu history pages per ticker.")
+    strategy_batch.add_argument("--interval-minutes", type=int, default=3, help="Research bar interval.")
+    strategy_batch.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
+    strategy_batch.add_argument("--stem", default=None)
 
     ingest = subparsers.add_parser("ingest", help="Collect layered evidence into PostgreSQL and rescore tickers.")
     ingest.add_argument("--tickers", nargs="*", default=[], help="Ticker symbols, for example PLPC STRL POWL.")

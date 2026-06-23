@@ -895,6 +895,158 @@ class PostgresStore:
                 ).fetchall()
             )
 
+    def trading_load_instances(self) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                select payload
+                from trading_instances
+                where mode = 'simulate'
+                order by updated_at desc nulls last, created_at desc nulls last
+                """
+            ).fetchall()
+            return [dict(row["payload"]) for row in rows if isinstance(row.get("payload"), dict)]
+
+    def trading_save_instances(self, instances: Iterable[dict[str, Any]]) -> None:
+        with self.connect() as conn:
+            for instance in instances:
+                self._trading_upsert_instance(conn, instance)
+            conn.commit()
+
+    def trading_delete_instance(self, instance_id: str) -> None:
+        with self.connect() as conn:
+            conn.execute("delete from trading_instances where id = %s", (instance_id,))
+            conn.commit()
+
+    def _trading_upsert_instance(self, conn: Any, instance: dict[str, Any]) -> None:
+        instance_id = str(instance.get("id") or "").strip()
+        if not instance_id:
+            return
+        conn.execute(
+            """
+            insert into trading_instances (
+                id, name, mode, strategy_id, pair_id, status,
+                signal_ticker, long_ticker, short_ticker,
+                payload, created_at, updated_at
+            )
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+            on conflict (id) do update set
+                name = excluded.name,
+                mode = excluded.mode,
+                strategy_id = excluded.strategy_id,
+                pair_id = excluded.pair_id,
+                status = excluded.status,
+                signal_ticker = excluded.signal_ticker,
+                long_ticker = excluded.long_ticker,
+                short_ticker = excluded.short_ticker,
+                payload = excluded.payload,
+                updated_at = excluded.updated_at
+            """,
+            (
+                instance_id,
+                str(instance.get("name") or ""),
+                str(instance.get("mode") or "simulate"),
+                str(instance.get("strategy_id") or ""),
+                str(instance.get("pair_id") or "custom"),
+                str(instance.get("status") or "idle"),
+                str(instance.get("signal_ticker") or ""),
+                str(instance.get("long_ticker") or ""),
+                str(instance.get("short_ticker") or ""),
+                json_dumps(instance),
+                str(instance.get("created_at") or ""),
+                str(instance.get("updated_at") or ""),
+            ),
+        )
+        conn.execute("delete from trading_events where instance_id = %s", (instance_id,))
+        conn.execute("delete from trading_trades where instance_id = %s", (instance_id,))
+        conn.execute("delete from trading_price_points where instance_id = %s", (instance_id,))
+        for event in instance.get("events") or []:
+            if isinstance(event, dict):
+                self._trading_upsert_event(conn, instance_id, event)
+        for trade in instance.get("trades") or []:
+            if isinstance(trade, dict):
+                self._trading_upsert_trade(conn, instance_id, trade)
+        for point in instance.get("price_points") or []:
+            if isinstance(point, dict):
+                self._trading_upsert_price_point(conn, instance_id, point)
+
+    def _trading_upsert_event(self, conn: Any, instance_id: str, event: dict[str, Any]) -> None:
+        event_id = str(event.get("id") or stable_hash(instance_id, event.get("time"), event.get("type"), event.get("message")))[:64]
+        conn.execute(
+            """
+            insert into trading_events (instance_id, event_id, event_time, event_type, severity, payload)
+            values (%s, %s, %s, %s, %s, %s::jsonb)
+            on conflict (instance_id, event_id) do update set
+                event_time = excluded.event_time,
+                event_type = excluded.event_type,
+                severity = excluded.severity,
+                payload = excluded.payload
+            """,
+            (
+                instance_id,
+                event_id,
+                str(event.get("time") or ""),
+                str(event.get("type") or ""),
+                str(event.get("severity") or ""),
+                json_dumps(event),
+            ),
+        )
+
+    def _trading_upsert_trade(self, conn: Any, instance_id: str, trade: dict[str, Any]) -> None:
+        trade_id = str(trade.get("id") or stable_hash(instance_id, trade.get("entry_time"), trade.get("exit_time"), trade.get("ticker")))[:64]
+        conn.execute(
+            """
+            insert into trading_trades (
+                instance_id, trade_id, leg, ticker,
+                entry_time, exit_time, pnl, return_pct, payload
+            )
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+            on conflict (instance_id, trade_id) do update set
+                leg = excluded.leg,
+                ticker = excluded.ticker,
+                entry_time = excluded.entry_time,
+                exit_time = excluded.exit_time,
+                pnl = excluded.pnl,
+                return_pct = excluded.return_pct,
+                payload = excluded.payload
+            """,
+            (
+                instance_id,
+                trade_id,
+                str(trade.get("leg") or ""),
+                str(trade.get("ticker") or ""),
+                str(trade.get("entry_time") or ""),
+                str(trade.get("exit_time") or ""),
+                float(trade.get("pnl") or 0),
+                float(trade.get("return_pct") or 0),
+                json_dumps(trade),
+            ),
+        )
+
+    def _trading_upsert_price_point(self, conn: Any, instance_id: str, point: dict[str, Any]) -> None:
+        point_index = _int_or_zero(point.get("index"))
+        if point_index <= 0:
+            return
+        conn.execute(
+            """
+            insert into trading_price_points (
+                instance_id, point_index, point_time, decision_index, payload
+            )
+            values (%s, %s, %s, %s, %s::jsonb)
+            on conflict (instance_id, point_index) do update set
+                point_time = excluded.point_time,
+                decision_index = excluded.decision_index,
+                payload = excluded.payload
+            """,
+            (
+                instance_id,
+                point_index,
+                str(point.get("time") or ""),
+                _int_or_zero(point.get("decision_index")),
+                json_dumps(point),
+            ),
+        )
+
 
 def _json_default(value: Any):
     if isinstance(value, (datetime, date)):
@@ -909,6 +1061,13 @@ def _json_default(value: Any):
 def _search_pattern(query: str) -> str:
     cleaned = str(query or "").strip().upper()
     return f"%{cleaned}%"
+
+
+def _int_or_zero(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _load_rate_limit_source_policies() -> dict[str, dict[str, Any]]:

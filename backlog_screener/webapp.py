@@ -21,6 +21,7 @@ from .market_prep import ai_prompt, opening_radar_snapshot
 from .pipeline import HiddenChampionPipeline
 from .settings import AppSettings
 from .timetable import configured_timetable_events, merge_timetable_events
+from .trading import TradingAutomationManager
 from .yahoo import fetch_nasdaq_price_trend, fetch_price_trend
 
 
@@ -34,6 +35,7 @@ def create_app(*, store: PostgresStore, settings: AppSettings) -> Flask:
     }
     lock = threading.Lock()
     short_term_tracker = ShortTermTracker(settings)
+    trading_manager = TradingAutomationManager(settings=settings, db_store=store)
 
     @app.get("/")
     def index():
@@ -331,6 +333,78 @@ def create_app(*, store: PostgresStore, settings: AppSettings) -> Flask:
     @app.post("/api/ticker/<ticker>/short-term/stop")
     def stop_ticker_short_term(ticker: str):
         return jsonify(_clean_json(short_term_tracker.stop(ticker)))
+
+    @app.get("/api/trading/simulate/strategies")
+    def trading_simulate_strategies():
+        return jsonify(_clean_json({"strategies": trading_manager.strategies(), "pairs": trading_manager.pairs()}))
+
+    @app.get("/api/trading/simulate/instances")
+    def trading_simulate_instances():
+        return jsonify(_clean_json(trading_manager.list_instances()))
+
+    @app.post("/api/trading/simulate/instances")
+    def create_trading_simulate_instance():
+        payload = request.get_json(force=True, silent=True) or {}
+        try:
+            instance = trading_manager.create_instance(payload)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(_clean_json({"instance": instance}))
+
+    @app.get("/api/trading/simulate/instances/<instance_id>")
+    def trading_simulate_instance(instance_id: str):
+        instance = trading_manager.get_instance(instance_id)
+        if not instance:
+            return jsonify({"error": "Trading instance not found."}), 404
+        return jsonify(_clean_json({"instance": instance}))
+
+    @app.patch("/api/trading/simulate/instances/<instance_id>/strategy")
+    def update_trading_simulate_instance_strategy(instance_id: str):
+        payload = request.get_json(force=True, silent=True) or {}
+        try:
+            instance = trading_manager.update_instance_strategy(instance_id, payload)
+        except KeyError as exc:
+            return jsonify({"error": str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(_clean_json({"instance": instance}))
+
+    @app.delete("/api/trading/simulate/instances/<instance_id>")
+    def delete_trading_simulate_instance(instance_id: str):
+        try:
+            result = trading_manager.delete_instance(instance_id)
+        except KeyError as exc:
+            return jsonify({"error": str(exc)}), 404
+        return jsonify(_clean_json(result))
+
+    @app.post("/api/trading/simulate/instances/<instance_id>/start")
+    def start_trading_simulate_instance(instance_id: str):
+        try:
+            instance = trading_manager.start_instance(instance_id)
+        except KeyError as exc:
+            return jsonify({"error": str(exc)}), 404
+        return jsonify(_clean_json({"instance": instance}))
+
+    @app.post("/api/trading/simulate/instances/<instance_id>/stop")
+    def stop_trading_simulate_instance(instance_id: str):
+        try:
+            instance = trading_manager.stop_instance(instance_id)
+        except KeyError as exc:
+            return jsonify({"error": str(exc)}), 404
+        return jsonify(_clean_json({"instance": instance}))
+
+    @app.post("/api/trading/simulate/instances/<instance_id>/backtest")
+    def backtest_trading_simulate_instance(instance_id: str):
+        payload = request.get_json(force=True, silent=True) or {}
+        try:
+            result = trading_manager.backtest_instance(instance_id, payload)
+        except KeyError as exc:
+            return jsonify({"error": str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:
+            return jsonify({"error": _short_futu_error(str(exc))}), 502
+        return jsonify(_clean_json({"backtest": result}))
 
     @app.get("/api/ticker/<ticker>/summary")
     def ticker_summary(ticker: str):

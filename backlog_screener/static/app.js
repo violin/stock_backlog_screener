@@ -21,11 +21,38 @@ let activeOpeningRadarSubView = "today";
 let openingTrendCache = new Map();
 let openingTrendRequest = 0;
 let openingTrendData = null;
+let tradingLoaded = false;
+let tradingStrategies = [];
+let tradingPairs = [];
+let tradingInstances = [];
+let activeTradingInstanceId = null;
+let tradingRefreshTimer = null;
+let tradingDetailRequest = 0;
+let tradingBacktestRequest = 0;
+let tradingDetailView = "live";
+let latestTradingDetail = null;
+let tradingBacktestResult = null;
+let tradingBacktestSelectedDate = null;
+const tradingChartStore = new Map();
 
 const TICKER_STORAGE_KEY = "codeBeta.tickers";
 const LEGACY_TICKER_STORAGE_KEY = "hiddenChampionScreener.tickers";
 const CANDIDATE_SEARCH_DEBOUNCE_MS = 250;
 const SHORT_TERM_POLL_MS = 1000;
+const TRADING_UI_POLL_MS = 2000;
+const TRADING_CHART_COLORS = {
+  bg: "#070a0f",
+  panel: "#0d131a",
+  grid: "rgba(154, 168, 182, 0.13)",
+  axis: "rgba(154, 168, 182, 0.28)",
+  muted: "#8492a5",
+  text: "#dbe5ee",
+  long: "#7db8ff",
+  short: "#f5bd4f",
+  rsi: "#4fd1c5",
+  buy: "#52d273",
+  sell: "#ff6b7a",
+};
 
 const els = {
   openScreeningButton: document.querySelector("#openScreeningButton"),
@@ -34,6 +61,9 @@ const els = {
   navOpeningRadarButton: document.querySelector("#navOpeningRadarButton"),
   navOpeningTodayButton: document.querySelector("#navOpeningTodayButton"),
   navOpeningTrendButton: document.querySelector("#navOpeningTrendButton"),
+  navTradingButton: document.querySelector("#navTradingButton"),
+  navTradingSimulateButton: document.querySelector("#navTradingSimulateButton"),
+  navTradingRealButton: document.querySelector("#navTradingRealButton"),
   navDataSourcesButton: document.querySelector("#navDataSourcesButton"),
   openRunsButton: document.querySelector("#openRunsButton"),
   globalSearch: document.querySelector("#globalSearch"),
@@ -74,6 +104,73 @@ const els = {
   openingAdviceMeta: document.querySelector("#openingAdviceMeta"),
   openingReportHistory: document.querySelector("#openingReportHistory"),
   openingAdviceBody: document.querySelector("#openingAdviceBody"),
+  tradingPage: document.querySelector("#tradingPage"),
+  tradingStatus: document.querySelector("#tradingStatus"),
+  toggleTradingFocusButton: document.querySelector("#toggleTradingFocusButton"),
+  refreshTradingButton: document.querySelector("#refreshTradingButton"),
+  tradingNameInput: document.querySelector("#tradingNameInput"),
+  tradingPairSelect: document.querySelector("#tradingPairSelect"),
+  tradingSignalTickerInput: document.querySelector("#tradingSignalTickerInput"),
+  tradingLongTickerInput: document.querySelector("#tradingLongTickerInput"),
+  tradingShortTickerInput: document.querySelector("#tradingShortTickerInput"),
+  tradingNotionalInput: document.querySelector("#tradingNotionalInput"),
+  tradingPollSecondsInput: document.querySelector("#tradingPollSecondsInput"),
+  createTradingInstanceButton: document.querySelector("#createTradingInstanceButton"),
+  tradingInstanceList: document.querySelector("#tradingInstanceList"),
+  tradingActiveMode: document.querySelector("#tradingActiveMode"),
+  tradingActiveName: document.querySelector("#tradingActiveName"),
+  tradingActiveMeta: document.querySelector("#tradingActiveMeta"),
+  startTradingInstanceButton: document.querySelector("#startTradingInstanceButton"),
+  stopTradingInstanceButton: document.querySelector("#stopTradingInstanceButton"),
+  deleteTradingInstanceButton: document.querySelector("#deleteTradingInstanceButton"),
+  tradingEmptyState: document.querySelector("#tradingEmptyState"),
+  tradingDetailBody: document.querySelector("#tradingDetailBody"),
+  tradingDetailStrategySelect: document.querySelector("#tradingDetailStrategySelect"),
+  tradingDetailProfitTakeInput: document.querySelector("#tradingDetailProfitTakeInput"),
+  tradingStrategyLabel: document.querySelector("#tradingStrategyLabel"),
+  tradingStrategyDescription: document.querySelector("#tradingStrategyDescription"),
+  tradingStrategySaveState: document.querySelector("#tradingStrategySaveState"),
+  tradingStrategyRules: document.querySelector("#tradingStrategyRules"),
+  tradingStrategyPerformance: document.querySelector("#tradingStrategyPerformance"),
+  tradingLiveTab: document.querySelector("#tradingLiveTab"),
+  tradingBacktestTab: document.querySelector("#tradingBacktestTab"),
+  tradingLivePanel: document.querySelector("#tradingLivePanel"),
+  tradingBacktestPanel: document.querySelector("#tradingBacktestPanel"),
+  tradingStrategyState: document.querySelector("#tradingStrategyState"),
+  tradingMetricGrid: document.querySelector("#tradingMetricGrid"),
+  tradingQuoteStrip: document.querySelector("#tradingQuoteStrip"),
+  tradingPositionGrid: document.querySelector("#tradingPositionGrid"),
+  tradingPriceMeta: document.querySelector("#tradingPriceMeta"),
+  tradingRsiMeta: document.querySelector("#tradingRsiMeta"),
+  tradingPriceChart: document.querySelector("#tradingPriceChart"),
+  tradingRsiChart: document.querySelector("#tradingRsiChart"),
+  tradingEventCount: document.querySelector("#tradingEventCount"),
+  tradingTradeCount: document.querySelector("#tradingTradeCount"),
+  tradingEventLog: document.querySelector("#tradingEventLog"),
+  tradingTradeLog: document.querySelector("#tradingTradeLog"),
+  tradingBacktestStart: document.querySelector("#tradingBacktestStart"),
+  tradingBacktestEnd: document.querySelector("#tradingBacktestEnd"),
+  runTradingBacktestButton: document.querySelector("#runTradingBacktestButton"),
+  tradingBacktestMoreButton: document.querySelector("#tradingBacktestMoreButton"),
+  tradingBacktestPeriodSummary: document.querySelector("#tradingBacktestPeriodSummary"),
+  tradingBacktestPeriodDetails: document.querySelector("#tradingBacktestPeriodDetails"),
+  tradingBacktestDailySection: document.querySelector("#tradingBacktestDailySection"),
+  tradingBacktestDailyCount: document.querySelector("#tradingBacktestDailyCount"),
+  tradingBacktestDailyList: document.querySelector("#tradingBacktestDailyList"),
+  tradingBacktestDayDetail: document.querySelector("#tradingBacktestDayDetail"),
+  tradingBacktestSelectedDate: document.querySelector("#tradingBacktestSelectedDate"),
+  tradingBacktestSelectedOutcome: document.querySelector("#tradingBacktestSelectedOutcome"),
+  tradingBacktestSummary: document.querySelector("#tradingBacktestSummary"),
+  tradingBacktestDayFacts: document.querySelector("#tradingBacktestDayFacts"),
+  tradingBacktestPriceMeta: document.querySelector("#tradingBacktestPriceMeta"),
+  tradingBacktestPriceChart: document.querySelector("#tradingBacktestPriceChart"),
+  tradingBacktestRsiMeta: document.querySelector("#tradingBacktestRsiMeta"),
+  tradingBacktestRsiChart: document.querySelector("#tradingBacktestRsiChart"),
+  tradingBacktestOperations: document.querySelector("#tradingBacktestOperations"),
+  tradingBacktestOperationCount: document.querySelector("#tradingBacktestOperationCount"),
+  tradingBacktestTrades: document.querySelector("#tradingBacktestTrades"),
+  tradingBacktestTradeCount: document.querySelector("#tradingBacktestTradeCount"),
+  tradingBacktestAudit: document.querySelector("#tradingBacktestAudit"),
   datasourceSummary: document.querySelector("#datasourceSummary"),
   datasourceList: document.querySelector("#datasourceList"),
   candidatePoolList: document.querySelector("#candidatePoolList"),
@@ -236,14 +333,20 @@ async function showWorkspaceView(view) {
   activeWorkspaceView = view;
   const datasourceView = view === "datasources";
   const openingRadarView = view === "opening-radar";
-  els.researchGrid.hidden = datasourceView || openingRadarView;
+  const tradingView = view === "trading-simulate";
+  els.researchGrid.hidden = datasourceView || openingRadarView || tradingView;
   els.datasourcePage.hidden = !datasourceView;
   els.openingRadarPage.hidden = !openingRadarView;
+  els.tradingPage.hidden = !tradingView;
   els.openScreeningButton.classList.toggle("active", view === "screening");
   els.navOpeningRadarButton.classList.toggle("active", openingRadarView);
+  els.navTradingButton.classList.toggle("active", tradingView);
+  els.navTradingSimulateButton.classList.toggle("active", tradingView);
   els.navPoolsButton.classList.toggle("active", view === "research");
   els.navDetailsButton.classList.toggle("active", view === "details");
   els.navDataSourcesButton.classList.toggle("active", datasourceView);
+  els.navTradingButton.setAttribute("aria-expanded", tradingView ? "true" : "false");
+  window.clearTimeout(tradingRefreshTimer);
   if (datasourceView) await loadDataSources();
   if (openingRadarView) {
     renderOpeningRadarSubView();
@@ -253,6 +356,25 @@ async function showWorkspaceView(view) {
       await loadOpeningRadar();
     }
   }
+  if (tradingView) {
+    await loadTradingSimulate();
+    scheduleTradingRefresh();
+  } else {
+    setTradingFocusMode(false);
+  }
+}
+
+function setTradingFocusMode(enabled) {
+  document.body.classList.toggle("trading-focus-mode", Boolean(enabled));
+  if (els.toggleTradingFocusButton) {
+    els.toggleTradingFocusButton.textContent = enabled ? "Exit Focus" : "Focus";
+    els.toggleTradingFocusButton.setAttribute("aria-pressed", enabled ? "true" : "false");
+  }
+  window.setTimeout(scheduleTradingChartResize, 80);
+}
+
+function toggleTradingFocusMode() {
+  setTradingFocusMode(!document.body.classList.contains("trading-focus-mode"));
 }
 
 async function openOpeningRadarView(subView = "today") {
@@ -877,6 +999,1721 @@ function scopeLabel(scope) {
 function statusLabel(status, enabled) {
   if (status === "planned") return "Planned";
   return enabled === false ? "Disabled" : "Active";
+}
+
+async function loadTradingSimulate({force = false} = {}) {
+  if (!tradingLoaded || force) {
+    try {
+      const data = await api("/api/trading/simulate/strategies");
+      tradingStrategies = data.strategies || [];
+      tradingPairs = data.pairs || [];
+      renderTradingStrategyOptions();
+      renderTradingPairOptions();
+      tradingLoaded = true;
+    } catch (error) {
+      els.tradingStatus.textContent = error.message;
+    }
+  }
+  await refreshTradingInstances();
+}
+
+function renderTradingStrategyOptions(selectedStrategyId = null, instance = latestTradingDetail) {
+  const current = selectedStrategyId || els.tradingDetailStrategySelect.value || "rsi_extreme";
+  const performance = instance?.strategy_performance || {};
+  els.tradingDetailStrategySelect.innerHTML = "";
+  for (const strategy of tradingStrategies) {
+    const option = document.createElement("option");
+    option.value = strategy.id;
+    option.textContent = strategyOptionText(strategy, performance[strategy.id]);
+    els.tradingDetailStrategySelect.appendChild(option);
+  }
+  if (!tradingStrategies.length) {
+    const option = document.createElement("option");
+    option.value = "rsi_extreme";
+    option.textContent = "RSI Extreme";
+    els.tradingDetailStrategySelect.appendChild(option);
+  }
+  els.tradingDetailStrategySelect.value = [...els.tradingDetailStrategySelect.options].some((option) => option.value === current)
+    ? current
+    : els.tradingDetailStrategySelect.options[0]?.value || "rsi_extreme";
+}
+
+async function refreshTradingInstances() {
+  try {
+    const data = await api("/api/trading/simulate/instances");
+    tradingInstances = data.instances || [];
+    if (!tradingStrategies.length && data.strategies) {
+      tradingStrategies = data.strategies;
+      renderTradingStrategyOptions();
+    }
+    if (!tradingPairs.length && data.pairs) {
+      tradingPairs = data.pairs;
+      renderTradingPairOptions();
+    }
+    if (activeTradingInstanceId && !tradingInstances.some((item) => item.id === activeTradingInstanceId)) {
+      activeTradingInstanceId = null;
+    }
+    if (!activeTradingInstanceId && tradingInstances.length) {
+      activeTradingInstanceId = tradingInstances[0].id;
+    }
+    renderTradingInstanceList();
+    if (activeTradingInstanceId) {
+      await loadTradingInstanceDetail(activeTradingInstanceId);
+    } else {
+      clearTradingDetail();
+    }
+  } catch (error) {
+    els.tradingStatus.textContent = error.message;
+  }
+}
+
+async function loadTradingInstanceDetail(instanceId) {
+  const requestId = ++tradingDetailRequest;
+  try {
+    const data = await api(`/api/trading/simulate/instances/${encodeURIComponent(instanceId)}`);
+    if (requestId !== tradingDetailRequest) return;
+    renderTradingDetail(data.instance);
+  } catch (error) {
+    if (requestId !== tradingDetailRequest) return;
+    els.tradingStatus.textContent = error.message;
+    clearTradingDetail();
+  }
+}
+
+function scheduleTradingRefresh() {
+  window.clearTimeout(tradingRefreshTimer);
+  if (activeWorkspaceView !== "trading-simulate") return;
+  tradingRefreshTimer = window.setTimeout(async () => {
+    await refreshTradingInstances();
+    scheduleTradingRefresh();
+  }, TRADING_UI_POLL_MS);
+}
+
+function renderTradingInstanceList() {
+  els.tradingInstanceList.innerHTML = "";
+  if (!tradingInstances.length) {
+    els.tradingInstanceList.innerHTML = `<div class="empty">No instances</div>`;
+    return;
+  }
+  for (const instance of tradingInstances) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `trading-instance-card${instance.id === activeTradingInstanceId ? " active" : ""}`;
+    const pnl = Number(instance.total_pnl || 0);
+    button.innerHTML = `
+      <strong>${escapeHtml(instance.name || `${instance.long_ticker}/${instance.short_ticker}`)}</strong>
+      <span>${escapeHtml(instance.signal_ticker || "-")} signal · ${escapeHtml(instance.long_ticker || "-")} long / ${escapeHtml(instance.short_ticker || "-")} bear</span>
+      <small data-pnl="${pnlDirection(pnl)}">${escapeHtml(tradingStatusText(instance.status))} · ${escapeHtml(moneyText(pnl))} · ${Number(instance.trade_count || 0)} closed</small>
+    `;
+    button.addEventListener("click", async () => {
+      activeTradingInstanceId = instance.id;
+      renderTradingInstanceList();
+      await loadTradingInstanceDetail(instance.id);
+    });
+    els.tradingInstanceList.appendChild(button);
+  }
+}
+
+function renderTradingPairOptions() {
+  const current = els.tradingPairSelect.value || "custom";
+  els.tradingPairSelect.innerHTML = `<option value="custom">Custom Pair</option>`;
+  for (const pair of tradingPairs) {
+    const option = document.createElement("option");
+    option.value = pair.id;
+    option.textContent = pair.label || `${pair.signal_ticker}/${pair.long_ticker}/${pair.short_ticker}`;
+    els.tradingPairSelect.appendChild(option);
+  }
+  els.tradingPairSelect.value = [...els.tradingPairSelect.options].some((option) => option.value === current)
+    ? current
+    : "custom";
+}
+
+function applyTradingPairSelection() {
+  const pairId = els.tradingPairSelect.value || "custom";
+  const pair = tradingPairs.find((item) => item.id === pairId);
+  if (!pair) return;
+  els.tradingSignalTickerInput.value = pair.signal_ticker || "";
+  els.tradingLongTickerInput.value = pair.long_ticker || "";
+  els.tradingShortTickerInput.value = pair.short_ticker || "";
+  if (!els.tradingNameInput.value.trim()) {
+    els.tradingNameInput.value = pair.label
+      ? pair.label
+      : `${pair.long_ticker}/${pair.short_ticker}`;
+  }
+}
+
+function setTradingPairCustom() {
+  if (els.tradingPairSelect.value !== "custom") els.tradingPairSelect.value = "custom";
+}
+
+function clearTradingDetail() {
+  latestTradingDetail = null;
+  tradingBacktestResult = null;
+  tradingBacktestSelectedDate = null;
+  els.tradingStatus.textContent = "Sim only";
+  els.tradingActiveMode.textContent = "SIMULATE";
+  els.tradingActiveName.textContent = "No instance";
+  els.tradingActiveMeta.textContent = "Create or select an instance";
+  els.startTradingInstanceButton.disabled = true;
+  els.stopTradingInstanceButton.disabled = true;
+  els.deleteTradingInstanceButton.disabled = true;
+  els.tradingDetailStrategySelect.disabled = true;
+  els.tradingDetailProfitTakeInput.disabled = true;
+  els.tradingStrategySaveState.textContent = "Select a pair";
+  els.tradingEmptyState.hidden = false;
+  els.tradingDetailBody.hidden = true;
+  renderTradingBacktestEmpty();
+}
+
+function renderTradingDetail(instance) {
+  if (!instance) {
+    clearTradingDetail();
+    return;
+  }
+  const previousId = latestTradingDetail?.id || null;
+  latestTradingDetail = instance;
+  if (previousId && previousId !== instance.id) {
+    tradingBacktestResult = null;
+    tradingBacktestSelectedDate = null;
+  }
+  const running = instance.status === "running";
+  const latest = instance.latest_market || {};
+  const metrics = instance.metrics || {};
+  els.tradingStatus.textContent = running
+    ? `Running · ${latest.source_label || "market data"}`
+    : instance.last_error
+      ? instance.last_error
+      : latest.time
+        ? `Idle · Last ${shortTimeOnly(latest.time)}`
+        : "Sim only";
+  els.tradingActiveMode.textContent = tradingStatusText(instance.status).toUpperCase();
+  els.tradingActiveName.textContent = instance.name || `${instance.long_ticker}/${instance.short_ticker}`;
+  els.tradingActiveMeta.textContent = `${instance.long_ticker} long · ${instance.short_ticker} bear · signal ${instance.signal_ticker}`;
+  els.startTradingInstanceButton.disabled = running;
+  els.stopTradingInstanceButton.disabled = !running;
+  els.deleteTradingInstanceButton.disabled = false;
+  els.tradingEmptyState.hidden = true;
+  els.tradingDetailBody.hidden = false;
+  renderTradingStrategyControl(instance);
+  setDefaultBacktestRange(instance);
+  renderTradingDetailView();
+  renderTradingStrategyState(instance.strategy_state || {});
+  renderTradingMetrics(instance, metrics, latest);
+  renderTradingQuotes(instance, latest);
+  renderTradingCharts(instance);
+  renderTradingEventLog(instance.events || []);
+  renderTradingTradeLog(instance.trades || []);
+}
+
+function renderTradingStrategyControl(instance) {
+  const strategyId = instance?.strategy_id || "rsi_extreme";
+  renderTradingStrategyOptions(strategyId, instance);
+  const strategy = tradingStrategies.find((item) => item.id === strategyId) || instance?.strategy || {};
+  const params = strategy.params || {};
+  const positions = instance?.positions || {};
+  const hasOpenPosition = Boolean(positions.long || positions.short);
+  const locked = instance?.status === "running" || hasOpenPosition;
+  const profitTakeEnabled = params.profit_take_enabled !== false;
+  els.tradingStrategyLabel.textContent = strategy.label || strategyName(strategyId);
+  els.tradingStrategyDescription.textContent = strategy.description || "Switch strategies here to compare the same ticker pair.";
+  renderTradingStrategyRules(strategy);
+  renderTradingStrategyPerformance((instance?.strategy_performance || {})[strategyId]);
+  els.tradingDetailStrategySelect.disabled = locked;
+  els.tradingDetailProfitTakeInput.disabled = locked || !profitTakeEnabled;
+  els.tradingDetailProfitTakeInput.value = String(((Number(instance?.profit_take_pct) || 0.04) * 100).toFixed(1));
+  els.tradingDetailProfitTakeInput.closest(".mini-field")?.classList.toggle("is-disabled", !profitTakeEnabled);
+  els.tradingStrategySaveState.dataset.state = locked ? "locked" : "saved";
+  els.tradingStrategySaveState.textContent = instance?.status === "running"
+    ? "Stop to switch"
+    : hasOpenPosition
+      ? "Close position to switch"
+      : "Saved";
+}
+
+function previewTradingStrategySelection() {
+  const strategyId = els.tradingDetailStrategySelect.value || "rsi_extreme";
+  const strategy = tradingStrategies.find((item) => item.id === strategyId) || {};
+  const profitTakeEnabled = strategy.params?.profit_take_enabled !== false;
+  els.tradingStrategyLabel.textContent = strategy.label || strategyName(strategyId);
+  els.tradingStrategyDescription.textContent = strategy.description || "Switch strategies here to compare the same ticker pair.";
+  renderTradingStrategyRules(strategy);
+  renderTradingStrategyPerformance((latestTradingDetail?.strategy_performance || {})[strategyId]);
+  els.tradingDetailProfitTakeInput.disabled = !profitTakeEnabled;
+  els.tradingDetailProfitTakeInput.closest(".mini-field")?.classList.toggle("is-disabled", !profitTakeEnabled);
+}
+
+function strategyOptionText(strategy, performance) {
+  const name = strategy.label || strategy.id || "Strategy";
+  const buy = String((strategy.buy_conditions || [])[0] || "").replace(/\.$/, "");
+  const sell = String((strategy.sell_conditions || [])[0] || "").replace(/\.$/, "");
+  const rules = strategy.option_summary || [buy, sell].filter(Boolean).join(" | ");
+  const performanceText = performance
+    ? `${(Number(performance.day_win_rate || 0) * 100).toFixed(1)}% days/${Number(performance.day_count || 0)} · ${moneyText(performance.total_pnl || 0)}`
+    : "not tested";
+  return `${name} · ${rules || "See rules"} · ${performanceText}`;
+}
+
+function renderTradingStrategyRules(strategy) {
+  const groups = [
+    ["BUY", strategy.buy_conditions || [], "buy"],
+    ["SELL", strategy.sell_conditions || [], "sell"],
+    ["RISK", strategy.risk_conditions || [], "risk"],
+  ];
+  els.tradingStrategyRules.innerHTML = groups
+    .filter(([, rules]) => rules.length)
+    .map(
+      ([label, rules, kind]) => `
+        <div class="trading-strategy-rule" data-kind="${escapeAttribute(kind)}">
+          <b>${escapeHtml(label)}</b>
+          <span>${escapeHtml(rules.join(" "))}</span>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function renderTradingStrategyPerformance(performance) {
+  if (!performance) {
+    els.tradingStrategyPerformance.innerHTML = `
+      <span class="trading-strategy-no-performance">No backtest saved for this pair and strategy</span>
+    `;
+    return;
+  }
+  const period = `${shortDateTime(performance.start)} -> ${shortDateTime(performance.end)}`;
+  const values = [
+    ["Day Win", `${(Number(performance.day_win_rate || 0) * 100).toFixed(1)}%`, `${Number(performance.winning_days || 0)}W / ${Number(performance.losing_days || 0)}L · ${Number(performance.day_count || 0)} days`],
+    ["Trade Win", `${(Number(performance.trade_win_rate || 0) * 100).toFixed(1)}%`, `${Number(performance.trade_count || 0)} trades`],
+    ["PnL", moneyText(performance.total_pnl || 0), `${Number(performance.trades_per_day || 0).toFixed(2)} trades/day`],
+    ["Period", period || "-", performance.source_label || "-"],
+  ];
+  els.tradingStrategyPerformance.innerHTML = values
+    .map(
+      ([label, value, help]) => `
+        <div>
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+          <small>${escapeHtml(help)}</small>
+        </div>
+      `
+    )
+    .join("");
+}
+
+async function updateTradingStrategySelection() {
+  if (!activeTradingInstanceId) return;
+  const strategyId = els.tradingDetailStrategySelect.value || "rsi_extreme";
+  const profitTakePercent = Number(els.tradingDetailProfitTakeInput.value || 4);
+  els.tradingDetailStrategySelect.disabled = true;
+  els.tradingDetailProfitTakeInput.disabled = true;
+  els.tradingStrategySaveState.dataset.state = "saving";
+  els.tradingStrategySaveState.textContent = "Saving";
+  try {
+    const data = await api(
+      `/api/trading/simulate/instances/${encodeURIComponent(activeTradingInstanceId)}/strategy`,
+      {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          strategy_id: strategyId,
+          profit_take_percent: profitTakePercent,
+        }),
+      }
+    );
+    tradingBacktestResult = null;
+    tradingBacktestSelectedDate = null;
+    renderTradingBacktestEmpty();
+    renderTradingDetail(data.instance);
+    await refreshTradingInstances();
+  } catch (error) {
+    alert(error.message);
+    await loadTradingInstanceDetail(activeTradingInstanceId);
+  }
+}
+
+function setTradingDetailView(view) {
+  tradingDetailView = view === "backtest" ? "backtest" : "live";
+  renderTradingDetailView();
+  if (tradingDetailView === "live" && latestTradingDetail) {
+    renderTradingCharts(latestTradingDetail);
+  }
+  window.setTimeout(scheduleTradingChartResize, 80);
+}
+
+function renderTradingDetailView() {
+  const isBacktest = tradingDetailView === "backtest";
+  els.tradingLiveTab.classList.toggle("active", !isBacktest);
+  els.tradingBacktestTab.classList.toggle("active", isBacktest);
+  els.tradingLiveTab.setAttribute("aria-selected", isBacktest ? "false" : "true");
+  els.tradingBacktestTab.setAttribute("aria-selected", isBacktest ? "true" : "false");
+  els.tradingLivePanel.hidden = isBacktest;
+  els.tradingBacktestPanel.hidden = !isBacktest;
+  if (isBacktest && tradingBacktestResult) {
+    renderTradingBacktestResult(tradingBacktestResult);
+  }
+}
+
+function setDefaultBacktestRange(instance) {
+  if (!instance || !els.tradingBacktestStart || !els.tradingBacktestEnd) return;
+  const currentId = els.tradingBacktestStart.dataset.instanceId || "";
+  const hasRange = Boolean(els.tradingBacktestStart.value && els.tradingBacktestEnd.value);
+  if (currentId === instance.id && hasRange) return;
+  const latest = parseTradingDate(instance.latest_market?.time) || currentNewYorkDate();
+  const {start, end} = regularUsSessionRange(latest);
+  els.tradingBacktestStart.value = datetimeLocalValue(start);
+  els.tradingBacktestEnd.value = datetimeLocalValue(end);
+  els.tradingBacktestStart.dataset.instanceId = instance.id || "";
+  els.tradingBacktestEnd.dataset.instanceId = instance.id || "";
+}
+
+function renderTradingBacktestEmpty(message = "Select a time range and run backtest") {
+  tradingBacktestSelectedDate = null;
+  closeTradingPopover(document.querySelector("#tradingBacktestPeriodTip"));
+  closeTradingPopover(document.querySelector("#tradingBacktestDayTip"));
+  if (els.tradingBacktestMoreButton) els.tradingBacktestMoreButton.hidden = true;
+  if (els.tradingBacktestPeriodSummary) {
+    els.tradingBacktestPeriodSummary.innerHTML = `<div class="empty">${escapeHtml(message)}</div>`;
+  }
+  if (els.tradingBacktestPeriodDetails) els.tradingBacktestPeriodDetails.innerHTML = "";
+  if (els.tradingBacktestDailySection) els.tradingBacktestDailySection.hidden = true;
+  if (els.tradingBacktestDayDetail) els.tradingBacktestDayDetail.hidden = true;
+  if (els.tradingBacktestDailyList) els.tradingBacktestDailyList.innerHTML = "";
+  if (els.tradingBacktestDailyCount) els.tradingBacktestDailyCount.textContent = "0 days";
+  if (els.tradingBacktestSummary) els.tradingBacktestSummary.innerHTML = "";
+  if (els.tradingBacktestDayFacts) els.tradingBacktestDayFacts.innerHTML = "";
+  if (els.tradingBacktestAudit) els.tradingBacktestAudit.open = false;
+  if (els.tradingBacktestPriceMeta) els.tradingBacktestPriceMeta.textContent = "-";
+  if (els.tradingBacktestRsiMeta) els.tradingBacktestRsiMeta.textContent = "-";
+  if (els.tradingBacktestPriceChart) {
+    renderTradingEmptyChart(els.tradingBacktestPriceChart, "Run backtest to draw price");
+  }
+  if (els.tradingBacktestRsiChart) {
+    renderTradingEmptyChart(els.tradingBacktestRsiChart, "Run backtest to draw RSI");
+  }
+  if (els.tradingBacktestOperations) {
+    els.tradingBacktestOperations.innerHTML = `<div class="empty">No backtest operations</div>`;
+  }
+  if (els.tradingBacktestOperationCount) els.tradingBacktestOperationCount.textContent = "0";
+  if (els.tradingBacktestTrades) {
+    els.tradingBacktestTrades.innerHTML = `<div class="empty">No PnL records</div>`;
+  }
+  if (els.tradingBacktestTradeCount) els.tradingBacktestTradeCount.textContent = "0";
+}
+
+function closeTradingPopover(target) {
+  if (!target || typeof target.hidePopover !== "function") return;
+  if (target.matches?.(":popover-open")) target.hidePopover();
+}
+
+function renderTradingMetrics(instance, metrics, latest) {
+  const totalPnl = Number(metrics.total_pnl || 0);
+  const realized = Number(metrics.realized_pnl || 0);
+  const unrealized = Number(metrics.unrealized_pnl || 0);
+  const openReturn = Number(metrics.open_return_pct || 0);
+  const tradeSize = Number(instance.notional_per_leg || 0);
+  const equity = tradeSize + totalPnl;
+  const rsiValue = tradingRsiValue(latest);
+  const rsiLabel = latest.rsi_label || "OpenD RSI1";
+  const rsiHelp = latest.rsi_source || latest.rsi_error || latest.error || "Unavailable";
+  const values = [
+    ["Equity", dollarText(equity), "trade size + PnL", pnlDirection(totalPnl)],
+    ["Total PnL", moneyText(totalPnl), `${moneyText(realized)} realized`, pnlDirection(totalPnl)],
+    ["Open PnL", moneyText(unrealized), pctText(openReturn), pnlDirection(unrealized)],
+    ["Closed Trades", String(Number(metrics.trade_count || 0)), `Win ${pctText(metrics.win_rate || 0)}`, ""],
+    [rsiLabel, Number.isFinite(rsiValue) ? rsiValue.toFixed(2) : "-", latest.time ? `${shortTimeOnly(latest.time)} · ${rsiHelp}` : rsiHelp, ""],
+    ["Trade Size", dollarText(tradeSize), "per entry", ""],
+  ];
+  els.tradingMetricGrid.innerHTML = values
+    .map(
+      ([label, value, help, direction]) => `
+        <div class="trading-metric" data-pnl="${escapeAttribute(direction || "")}">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+          <small>${escapeHtml(help || "")}</small>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function renderTradingStrategyState(strategyState) {
+  const state = strategyState || {};
+  const severity = state.severity || "idle";
+  const rsiLabel = state.rsi_label || "OpenD RSI1";
+  const rsiValue = tradingRsiValue(state);
+  const profitTakeEnabled = state.profit_take_enabled !== false;
+  const details = [
+    [rsiLabel, Number.isFinite(rsiValue) ? rsiValue.toFixed(2) : "-"],
+    ["Entry", `<= ${numberText(state.buy_threshold)}`],
+    ["Bear Entry", `>= ${numberText(state.sell_threshold)}`],
+    ["Take Profit", profitTakeEnabled ? `>= ${pctThresholdText(state.profit_take_pct)}` : "Off"],
+  ];
+  els.tradingStrategyState.innerHTML = `
+    <div class="trading-state-card" data-severity="${escapeAttribute(severity)}">
+      <div>
+        <span>Strategy State</span>
+        <strong>${escapeHtml(state.headline || "Waiting for strategy state")}</strong>
+        <small>${escapeHtml(state.detail || "Start the simulation to evaluate the next RSI node.")}</small>
+      </div>
+      <div class="trading-state-meta">
+        ${details
+          .map(
+            ([label, value]) => `
+              <span><b>${escapeHtml(label)}</b> ${escapeHtml(value)}</span>
+            `
+          )
+          .join("")}
+      </div>
+      <p>${escapeHtml(state.next_action || "No action queued.")}</p>
+    </div>
+  `;
+}
+
+function renderTradingQuotes(instance, latest) {
+  const positions = instance.positions || {};
+  const quotes = [
+    {
+      role: "Signal",
+      ticker: instance.signal_ticker,
+      last: latest.signal_price,
+      bid: latest.signal_bid,
+      ask: latest.signal_ask,
+      help: "RSI source",
+      position: null,
+    },
+    {
+      role: "Long",
+      ticker: instance.long_ticker,
+      last: latest.long_price,
+      bid: latest.long_bid,
+      ask: latest.long_ask,
+      help: "Buy ask / sell bid",
+      position: positions.long,
+      markPrice: positions.long ? positions.long.mark_price : latest.long_bid,
+      markLabel: "Bid mark",
+    },
+    {
+      role: "Bear",
+      ticker: instance.short_ticker,
+      last: latest.short_price,
+      bid: latest.short_bid,
+      ask: latest.short_ask,
+      help: "Inverse ticker · buy ask / sell bid",
+      position: positions.short,
+      markPrice: positions.short ? positions.short.mark_price : latest.short_bid,
+      markLabel: "Bid mark",
+    },
+  ];
+  els.tradingPositionGrid.hidden = true;
+  els.tradingPositionGrid.innerHTML = "";
+  els.tradingQuoteStrip.innerHTML = quotes.map(tradingQuoteMarkup).join("");
+}
+
+function tradingQuoteMarkup(quote) {
+  const position = quote.position;
+  const pnl = Number(position?.unrealized_pnl || 0);
+  const direction = position ? pnlDirection(pnl) : "";
+  const exposureLine = position
+    ? `${quote.markLabel || "Mark"} ${priceText(quote.markPrice)} · ${pctText(position.return_pct || 0)} · ${moneyText(pnl)}`
+    : quote.role === "Signal"
+      ? ""
+      : "Flat";
+  return `
+    <div class="trading-quote-card" data-pnl="${escapeAttribute(direction)}">
+      <div>
+        <span>${escapeHtml(quote.role)}</span>
+        <strong>${escapeHtml(quote.ticker || "-")}</strong>
+        <small>${escapeHtml(quote.help)}</small>
+      </div>
+      <div class="trading-quote-values">
+        <b>${escapeHtml(priceText(quote.last))}</b>
+        <small>Bid ${escapeHtml(priceText(quote.bid))} · Ask ${escapeHtml(priceText(quote.ask))}</small>
+        ${exposureLine ? `<em>${escapeHtml(exposureLine)}</em>` : ""}
+      </div>
+    </div>
+  `;
+}
+
+function renderTradingPositions(instance, latest) {
+  els.tradingPositionGrid.hidden = true;
+  els.tradingPositionGrid.innerHTML = "";
+}
+
+function tradingPositionMarkup(label, position, ticker, markPrice, markLabel, flatQuoteText) {
+  if (!position) {
+    return `
+      <div class="trading-position-card">
+        <div>
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(ticker || "-")}</strong>
+          <small>Flat · ${escapeHtml(flatQuoteText || `${markLabel} ${priceText(markPrice)}`)}</small>
+        </div>
+        <b>-</b>
+      </div>
+    `;
+  }
+  const pnl = Number(position.unrealized_pnl || 0);
+  return `
+    <div class="trading-position-card" data-pnl="${escapeAttribute(pnlDirection(pnl))}">
+      <div>
+        <span>${escapeHtml(label)}</span>
+        <strong>${escapeHtml(position.ticker || ticker || "-")} @ ${escapeHtml(priceText(position.entry_price))}</strong>
+        <small>${escapeHtml(markLabel)} ${escapeHtml(priceText(markPrice))} · ${escapeHtml(pctText(position.return_pct || 0))}</small>
+      </div>
+      <b>${escapeHtml(moneyText(pnl))}</b>
+    </div>
+  `;
+}
+
+function quoteSpreadText(bid, ask) {
+  return `Bid ${priceText(bid)} · Ask ${priceText(ask)}`;
+}
+
+function renderTradingCharts(instance) {
+  const points = Array.isArray(instance.price_points) ? instance.price_points : [];
+  const latest = instance.latest_market || {};
+  const rsiLabel = latest.rsi_label || "OpenD RSI1";
+  const rsiValue = tradingRsiValue(latest);
+  const rsiStatus = Number.isFinite(rsiValue) ? numberText(rsiValue) : "Unavailable";
+  els.tradingPriceMeta.textContent = `${instance.long_ticker}/${instance.short_ticker} · ${latest.time ? shortTimeOnly(latest.time) : "-"}`;
+  els.tradingRsiMeta.textContent = `${rsiLabel} ${rsiStatus} · ${latest.rsi_source || latest.rsi_error || latest.source_label || "-"}`;
+  renderTradingPriceChart(points, instance, {target: els.tradingPriceChart});
+  renderTradingRsiChart(points, {target: els.tradingRsiChart});
+}
+
+function renderTradingPriceChart(points, instance, {target, markers = []} = {}) {
+  target = target || els.tradingPriceChart;
+  const cleanPoints = points.filter(
+    (point) => Number.isFinite(Number(point.long_price)) || Number.isFinite(Number(point.short_price))
+  );
+  if (cleanPoints.length < 2) {
+    renderTradingEmptyChart(target, "Waiting for price points");
+    return;
+  }
+  if (renderTradingPriceEchart(cleanPoints, instance, target, markers)) return;
+  renderTradingPriceSvgChart(cleanPoints, instance, target, markers);
+}
+
+function renderTradingPriceSvgChart(cleanPoints, instance, target, markers = []) {
+  disposeTradingChart(target);
+  const width = 900;
+  const height = 260;
+  const padTop = 20;
+  const padBottom = 34;
+  const padX = 22;
+  const values = cleanPoints
+    .flatMap((point) => [Number(point.long_price), Number(point.short_price)])
+    .filter((value) => Number.isFinite(value));
+  const [minValue, maxValue] = paddedDomain(Math.min(...values), Math.max(...values));
+  const longLine = tradingLine(cleanPoints, "long_price", minValue, maxValue, width, height, padTop, padBottom, padX);
+  const shortLine = tradingLine(cleanPoints, "short_price", minValue, maxValue, width, height, padTop, padBottom, padX);
+  const grid = tradingGrid(width, height, padTop, padBottom, padX);
+  const markerSvg = tradingPriceMarkers(cleanPoints, markers, minValue, maxValue, width, height, padTop, padBottom, padX);
+  target.innerHTML = `
+    <svg class="trading-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-label="Simulated pair prices">
+      ${grid}
+      <polyline class="trading-price-long" points="${longLine}" />
+      <polyline class="trading-price-short" points="${shortLine}" />
+      ${markerSvg}
+      <text class="trading-axis-label" x="${padX}" y="${height - 10}">${escapeHtml(instance.long_ticker || "Long")}</text>
+      <text class="trading-axis-label" x="${width - padX}" y="${height - 10}" text-anchor="end">${escapeHtml(instance.short_ticker || "Short")}</text>
+    </svg>
+  `;
+}
+
+function renderTradingRsiChart(points, {target, markers = []} = {}) {
+  target = target || els.tradingRsiChart;
+  const cleanPoints = points
+    .map((point) => ({...point, _rsiValue: tradingRsiValue(point)}))
+    .filter((point) => Number.isFinite(point._rsiValue));
+  if (cleanPoints.length < 2) {
+    renderTradingEmptyChart(target, "Waiting for RSI points");
+    return;
+  }
+  if (renderTradingRsiEchart(cleanPoints, target, markers)) return;
+  renderTradingRsiSvgChart(cleanPoints, target, markers);
+}
+
+function renderTradingRsiSvgChart(cleanPoints, target, markers = []) {
+  disposeTradingChart(target);
+  const width = 720;
+  const height = 260;
+  const padTop = 20;
+  const padBottom = 34;
+  const padX = 22;
+  const line = tradingLine(cleanPoints, "_rsiValue", 0, 100, width, height, padTop, padBottom, padX);
+  const y20 = tradingY(20, 0, 100, height, padTop, padBottom);
+  const y80 = tradingY(80, 0, 100, height, padTop, padBottom);
+  const markerSvg = tradingRsiMarkers(cleanPoints, markers, width, height, padTop, padBottom, padX);
+  target.innerHTML = `
+    <svg class="trading-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-label="RSI line">
+      ${tradingGrid(width, height, padTop, padBottom, padX)}
+      <line class="trading-rsi-threshold" x1="${padX}" x2="${width - padX}" y1="${y20.toFixed(1)}" y2="${y20.toFixed(1)}" />
+      <line class="trading-rsi-threshold" x1="${padX}" x2="${width - padX}" y1="${y80.toFixed(1)}" y2="${y80.toFixed(1)}" />
+      <polyline class="trading-rsi-line" points="${line}" />
+      ${markerSvg}
+      <text class="trading-axis-label" x="${padX}" y="${y20 - 4}">20</text>
+      <text class="trading-axis-label" x="${padX}" y="${y80 - 4}">80</text>
+    </svg>
+  `;
+}
+
+function renderTradingPriceEchart(cleanPoints, instance, target, markers = []) {
+  const chart = getTradingEchart(target);
+  if (!chart) return false;
+  const longValues = cleanPoints.map((point) => Number(point.long_price)).filter((value) => Number.isFinite(value));
+  const shortValues = cleanPoints.map((point) => Number(point.short_price)).filter((value) => Number.isFinite(value));
+  const fallbackValues = longValues.concat(shortValues);
+  const longDomain = tradingValueDomain(longValues, fallbackValues);
+  const shortDomain = tradingValueDomain(shortValues, fallbackValues);
+  const markersByIndex = tradingMarkersByIndex(cleanPoints, markers);
+  const longName = instance.long_ticker || "Long";
+  const shortName = instance.short_ticker || "Bear";
+  const option = {
+    backgroundColor: "transparent",
+    animationDuration: 240,
+    textStyle: tradingEchartTextStyle(),
+    grid: {left: 48, right: 52, top: 24, bottom: 30, containLabel: false},
+    tooltip: tradingEchartTooltip(cleanPoints, markersByIndex),
+    xAxis: tradingEchartXAxis(cleanPoints),
+    yAxis: [
+      tradingEchartPriceYAxis("left", longDomain, longName, TRADING_CHART_COLORS.long, true),
+      tradingEchartPriceYAxis("right", shortDomain, shortName, TRADING_CHART_COLORS.short, false),
+    ],
+    series: [
+      {
+        name: longName,
+        type: "line",
+        yAxisIndex: 0,
+        data: tradingEchartSeriesData(cleanPoints, "long_price"),
+        smooth: 0.2,
+        showSymbol: false,
+        connectNulls: true,
+        lineStyle: {width: 2.4, color: TRADING_CHART_COLORS.long},
+        itemStyle: {color: TRADING_CHART_COLORS.long},
+        areaStyle: {color: "rgba(125, 184, 255, 0.06)"},
+        endLabel: tradingEchartEndLabel(longName, TRADING_CHART_COLORS.long),
+        markPoint: tradingEchartMarkPoint(tradingEchartPriceMarkers(cleanPoints, markers, "long")),
+      },
+      {
+        name: shortName,
+        type: "line",
+        yAxisIndex: 1,
+        data: tradingEchartSeriesData(cleanPoints, "short_price"),
+        smooth: 0.2,
+        showSymbol: false,
+        connectNulls: true,
+        lineStyle: {width: 2.2, color: TRADING_CHART_COLORS.short},
+        itemStyle: {color: TRADING_CHART_COLORS.short},
+        areaStyle: {color: "rgba(245, 189, 79, 0.05)"},
+        endLabel: tradingEchartEndLabel(shortName, TRADING_CHART_COLORS.short),
+        markPoint: tradingEchartMarkPoint(tradingEchartPriceMarkers(cleanPoints, markers, "short")),
+      },
+    ],
+  };
+  target.setAttribute("aria-label", "Simulated pair prices");
+  chart.setOption(option, true);
+  scheduleTradingChartResize();
+  return true;
+}
+
+function renderTradingRsiEchart(cleanPoints, target, markers = []) {
+  const chart = getTradingEchart(target);
+  if (!chart) return false;
+  const markersByIndex = tradingMarkersByIndex(cleanPoints, markers);
+  const option = {
+    backgroundColor: "transparent",
+    animationDuration: 240,
+    textStyle: tradingEchartTextStyle(),
+    grid: {left: 38, right: 20, top: 24, bottom: 30, containLabel: false},
+    tooltip: tradingEchartTooltip(cleanPoints, markersByIndex),
+    xAxis: tradingEchartXAxis(cleanPoints),
+    yAxis: {
+      type: "value",
+      min: 0,
+      max: 100,
+      axisLabel: {color: TRADING_CHART_COLORS.muted, fontSize: 10, formatter: (value) => Number(value).toFixed(0)},
+      axisLine: {lineStyle: {color: TRADING_CHART_COLORS.axis}},
+      axisTick: {show: false},
+      splitLine: {lineStyle: {color: TRADING_CHART_COLORS.grid}},
+    },
+    series: [
+      {
+        name: "RSI",
+        type: "line",
+        data: tradingEchartSeriesData(cleanPoints, "_rsiValue"),
+        smooth: 0.18,
+        showSymbol: false,
+        connectNulls: true,
+        lineStyle: {width: 2.35, color: TRADING_CHART_COLORS.rsi},
+        itemStyle: {color: TRADING_CHART_COLORS.rsi},
+        areaStyle: {color: "rgba(79, 209, 197, 0.06)"},
+        markLine: {
+          silent: true,
+          symbol: "none",
+          label: {
+            color: TRADING_CHART_COLORS.muted,
+            fontSize: 10,
+            formatter: "{b}",
+            position: "insideEndTop",
+          },
+          lineStyle: {
+            color: "rgba(245, 189, 79, 0.46)",
+            type: "dashed",
+            width: 1,
+          },
+          data: [
+            {name: "80", yAxis: 80},
+            {name: "20", yAxis: 20},
+          ],
+        },
+        markPoint: tradingEchartMarkPoint(tradingEchartRsiMarkers(cleanPoints, markers)),
+      },
+    ],
+  };
+  target.setAttribute("aria-label", "RSI line");
+  chart.setOption(option, true);
+  scheduleTradingChartResize();
+  return true;
+}
+
+function renderTradingEmptyChart(target, message) {
+  disposeTradingChart(target);
+  target.innerHTML = `<div class="empty">${escapeHtml(message)}</div>`;
+}
+
+function getTradingEchart(target) {
+  if (!target || !window.echarts || typeof window.echarts.init !== "function") return null;
+  if (target.offsetParent === null || target.clientWidth < 40 || target.clientHeight < 40) return null;
+  let chart = tradingChartStore.get(target);
+  if (!chart || (typeof chart.isDisposed === "function" && chart.isDisposed())) {
+    target.innerHTML = "";
+    target.classList.add("trading-echart-host");
+    chart = window.echarts.init(target, null, {renderer: "canvas"});
+    tradingChartStore.set(target, chart);
+  }
+  return chart;
+}
+
+function disposeTradingChart(target) {
+  const chart = tradingChartStore.get(target);
+  if (chart && typeof chart.dispose === "function" && (!chart.isDisposed || !chart.isDisposed())) {
+    chart.dispose();
+  }
+  tradingChartStore.delete(target);
+  if (target) target.classList.remove("trading-echart-host");
+}
+
+function scheduleTradingChartResize() {
+  window.requestAnimationFrame(() => {
+    tradingChartStore.forEach((chart, target) => {
+      if (!target.isConnected || (typeof chart.isDisposed === "function" && chart.isDisposed())) {
+        tradingChartStore.delete(target);
+        return;
+      }
+      chart.resize();
+    });
+  });
+}
+
+function tradingEchartTextStyle() {
+  return {
+    color: TRADING_CHART_COLORS.text,
+    fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
+    fontSize: 11,
+  };
+}
+
+function tradingEchartXAxis(points) {
+  return {
+    type: "value",
+    min: 0,
+    max: Math.max(points.length - 1, 1),
+    boundaryGap: false,
+    axisLabel: {
+      color: TRADING_CHART_COLORS.muted,
+      fontSize: 10,
+      hideOverlap: true,
+      formatter: (value) => tradingAxisTimeLabel(points, value),
+    },
+    axisLine: {lineStyle: {color: TRADING_CHART_COLORS.axis}},
+    axisTick: {show: false},
+    splitLine: {show: false},
+  };
+}
+
+function tradingEchartPriceYAxis(position, domain, name, color, showSplitLine) {
+  return {
+    type: "value",
+    position,
+    min: domain[0],
+    max: domain[1],
+    name,
+    nameTextStyle: {color, fontSize: 10, fontWeight: 800, padding: position === "left" ? [0, 0, 0, 4] : [0, 4, 0, 0]},
+    axisLabel: {color: TRADING_CHART_COLORS.muted, fontSize: 10, formatter: (value) => `$${priceBareText(value)}`},
+    axisLine: {lineStyle: {color: TRADING_CHART_COLORS.axis}},
+    axisTick: {show: false},
+    splitLine: showSplitLine ? {lineStyle: {color: TRADING_CHART_COLORS.grid}} : {show: false},
+  };
+}
+
+function tradingEchartSeriesData(points, key) {
+  return points.map((point, index) => {
+    const value = Number(point[key]);
+    return [index, Number.isFinite(value) ? value : null];
+  });
+}
+
+function tradingEchartEndLabel(name, color) {
+  return {
+    show: true,
+    formatter: name,
+    color,
+    fontSize: 10,
+    fontWeight: 850,
+    distance: 6,
+  };
+}
+
+function tradingEchartMarkPoint(data) {
+  return {
+    symbolKeepAspect: true,
+    z: 6,
+    data,
+    emphasis: {
+      label: {show: true},
+    },
+  };
+}
+
+function tradingEchartPriceMarkers(points, markers, leg) {
+  const indexByTime = tradingPointIndex(points);
+  const valueKey = leg === "short" ? "short_price" : "long_price";
+  return (markers || [])
+    .filter((marker) => tradingMarkerLeg(marker) === leg)
+    .map((marker) => {
+      const pointIndex = indexByTime.get(String(marker.time || ""));
+      if (pointIndex === undefined) return null;
+      const point = points[pointIndex];
+      const value = Number(marker.price ?? point[valueKey]);
+      if (!Number.isFinite(value)) return null;
+      return tradingEchartMarkerData(marker, pointIndex, value, `${tradingMarkerLabel(marker)}\n${priceText(value)}`);
+    })
+    .filter(Boolean);
+}
+
+function tradingEchartRsiMarkers(points, markers) {
+  const indexByTime = tradingPointIndex(points);
+  const grouped = new Map();
+  (markers || []).forEach((marker) => {
+    const pointIndex = indexByTime.get(String(marker.time || ""));
+    if (pointIndex === undefined) return;
+    const group = grouped.get(pointIndex) || [];
+    group.push(marker);
+    grouped.set(pointIndex, group);
+  });
+  return [...grouped.entries()]
+    .map(([pointIndex, group]) => {
+      const point = points[pointIndex];
+      const primary = group.find((marker) => Number.isFinite(Number(marker.rsi))) || group[0];
+      const rsi = Number(primary?.rsi ?? point?._rsiValue);
+      if (!Number.isFinite(rsi)) return null;
+      const signalLabel = rsi >= 80 ? "BEAR" : rsi <= 20 ? "LONG" : tradingMarkerLabel(primary);
+      return tradingEchartMarkerData(primary, pointIndex, rsi, `${signalLabel}\n${numberText(rsi)}`, rsi >= 80 ? "sell" : "buy");
+    })
+    .filter(Boolean);
+}
+
+function tradingEchartMarkerData(marker, pointIndex, value, label, forcedType = "") {
+  const type = forcedType || tradingMarkerType(marker);
+  const isSell = type === "sell";
+  const color = isSell ? TRADING_CHART_COLORS.sell : TRADING_CHART_COLORS.buy;
+  return {
+    name: label.replace(/\n/g, " "),
+    coord: [pointIndex, value],
+    value,
+    symbol: "triangle",
+    symbolSize: 12,
+    symbolRotate: isSell ? 180 : 0,
+    itemStyle: {
+      color,
+      borderColor: TRADING_CHART_COLORS.bg,
+      borderWidth: 2,
+    },
+    label: {
+      show: true,
+      formatter: label,
+      position: isSell ? "top" : "bottom",
+      distance: 8,
+      color: "#eff6ff",
+      backgroundColor: isSell ? "rgba(112, 35, 50, 0.9)" : "rgba(22, 87, 55, 0.9)",
+      borderColor: isSell ? "rgba(255, 107, 122, 0.62)" : "rgba(82, 210, 115, 0.62)",
+      borderWidth: 1,
+      borderRadius: 4,
+      padding: [3, 5],
+      fontSize: 10,
+      fontWeight: 850,
+      lineHeight: 13,
+    },
+  };
+}
+
+function tradingEchartTooltip(points, markersByIndex) {
+  return {
+    trigger: "axis",
+    confine: true,
+    appendToBody: true,
+    backgroundColor: "rgba(13, 19, 26, 0.96)",
+    borderColor: "rgba(154, 168, 182, 0.24)",
+    borderWidth: 1,
+    textStyle: tradingEchartTextStyle(),
+    axisPointer: {
+      type: "line",
+      lineStyle: {color: "rgba(219, 229, 238, 0.22)", width: 1},
+    },
+    formatter: (params) => {
+      const items = Array.isArray(params) ? params : [params];
+      const first = items.find((item) => Array.isArray(item.value));
+      const pointIndex = Math.round(Number(first?.value?.[0]));
+      const point = points[pointIndex] || {};
+      const lines = [`<strong>${escapeHtml(shortDateTime(point.time) || `Point ${pointIndex + 1}`)}</strong>`];
+      items
+        .filter((item) => item.seriesType === "line" && Array.isArray(item.value))
+        .forEach((item) => {
+          const value = Number(item.value[1]);
+          if (!Number.isFinite(value)) return;
+          const marker = `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${escapeAttribute(item.color)};margin-right:6px;"></span>`;
+          const suffix = item.seriesName === "RSI" ? numberText(value) : priceText(value);
+          lines.push(`${marker}${escapeHtml(item.seriesName)} ${escapeHtml(suffix)}`);
+        });
+      const rsi = tradingRsiValue(point);
+      if (Number.isFinite(rsi) && !items.some((item) => item.seriesName === "RSI")) {
+        lines.push(`RSI ${escapeHtml(numberText(rsi))}`);
+      }
+      const markerLines = markersByIndex.get(pointIndex) || [];
+      markerLines.forEach((marker) => lines.push(`<span class="chart-tip-action">${escapeHtml(tradingMarkerTooltipText(marker))}</span>`));
+      return lines.join("<br/>");
+    },
+  };
+}
+
+function tradingMarkersByIndex(points, markers) {
+  const indexByTime = tradingPointIndex(points);
+  const result = new Map();
+  (markers || []).forEach((marker) => {
+    const pointIndex = indexByTime.get(String(marker.time || ""));
+    if (pointIndex === undefined) return;
+    const rows = result.get(pointIndex) || [];
+    rows.push(marker);
+    result.set(pointIndex, rows);
+  });
+  return result;
+}
+
+function tradingMarkerTooltipText(marker) {
+  const ticker = marker.ticker ? ` ${marker.ticker}` : "";
+  const price = Number.isFinite(Number(marker.price)) ? ` ${priceText(marker.price)}` : "";
+  const quote = marker.quote_side ? ` ${String(marker.quote_side).toUpperCase()}` : "";
+  const rsi = Number.isFinite(Number(marker.rsi)) ? ` · RSI ${numberText(marker.rsi)}` : "";
+  return `${tradingMarkerLabel(marker)}${ticker}${price}${quote}${rsi}`;
+}
+
+function tradingAxisTimeLabel(points, value) {
+  const index = Math.round(Number(value));
+  if (!Number.isFinite(index) || index < 0 || index >= points.length) return "";
+  const point = points[index];
+  if (!point) return "";
+  if (index === 0 || index === points.length - 1) return shortDateTime(point.time);
+  return shortTimeOnly(point.time);
+}
+
+function tradingValueDomain(values, fallbackValues = []) {
+  const source = values.length ? values : fallbackValues;
+  if (!source.length) return [0, 1];
+  return paddedDomain(Math.min(...source), Math.max(...source));
+}
+
+function tradingRsiValue(point) {
+  if (!point) return NaN;
+  for (const key of ["rsi", "rsi1", "rsi3"]) {
+    const raw = point[key];
+    if (raw === null || raw === undefined || raw === "") continue;
+    const value = Number(raw);
+    if (Number.isFinite(value)) return value;
+  }
+  return NaN;
+}
+
+function tradingLine(points, key, minValue, maxValue, width, height, padTop, padBottom, padX) {
+  const lastIndex = Math.max(points.length - 1, 1);
+  const plotWidth = width - padX * 2;
+  return points
+    .map((point, index) => {
+      const value = Number(point[key]);
+      if (!Number.isFinite(value)) return "";
+      const x = padX + (index / lastIndex) * plotWidth;
+      const y = tradingY(value, minValue, maxValue, height, padTop, padBottom);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
+function tradingPriceMarkers(points, markers, minValue, maxValue, width, height, padTop, padBottom, padX) {
+  const indexByTime = tradingPointIndex(points);
+  const lastIndex = Math.max(points.length - 1, 1);
+  const plotWidth = width - padX * 2;
+  return (markers || [])
+    .map((marker) => {
+      const pointIndex = indexByTime.get(String(marker.time || ""));
+      if (pointIndex === undefined) return "";
+      const point = points[pointIndex];
+      const leg = String(marker.leg || "").toLowerCase();
+      const key = leg === "short" ? "short_price" : "long_price";
+      const value = Number(marker.price ?? point[key]);
+      if (!Number.isFinite(value)) return "";
+      const x = padX + (pointIndex / lastIndex) * plotWidth;
+      const y = tradingY(value, minValue, maxValue, height, padTop, padBottom);
+      return tradingMarkerSvg(marker, x, y);
+    })
+    .filter(Boolean)
+    .join("");
+}
+
+function tradingRsiMarkers(points, markers, width, height, padTop, padBottom, padX) {
+  const indexByTime = tradingPointIndex(points);
+  const lastIndex = Math.max(points.length - 1, 1);
+  const plotWidth = width - padX * 2;
+  return (markers || [])
+    .map((marker) => {
+      const pointIndex = indexByTime.get(String(marker.time || ""));
+      if (pointIndex === undefined) return "";
+      const point = points[pointIndex];
+      const rsi = Number(marker.rsi ?? point._rsiValue);
+      if (!Number.isFinite(rsi)) return "";
+      const x = padX + (pointIndex / lastIndex) * plotWidth;
+      const y = tradingY(rsi, 0, 100, height, padTop, padBottom);
+      return tradingMarkerSvg(marker, x, y);
+    })
+    .filter(Boolean)
+    .join("");
+}
+
+function tradingMarkerLeg(marker) {
+  const leg = String(marker?.leg || "").toLowerCase();
+  if (leg === "bear") return "short";
+  if (leg === "short" || leg === "long") return leg;
+  return "";
+}
+
+function tradingMarkerType(marker) {
+  return String(marker?.type || "").toLowerCase() === "sell" ? "sell" : "buy";
+}
+
+function tradingMarkerLabel(marker) {
+  return tradingMarkerType(marker) === "sell" ? "SELL" : "BUY";
+}
+
+function tradingMarkerSvg(marker, x, y) {
+  const type = tradingMarkerType(marker);
+  const label = tradingMarkerLabel(marker);
+  const value = Number(marker.price);
+  const priceLabel = Number.isFinite(value) ? priceText(value) : "";
+  const labelY = type === "sell" ? y - 18 : y + 18;
+  const anchorY = type === "sell" ? y - 5 : y + 5;
+  return `
+    <g class="trading-marker" data-type="${escapeAttribute(type)}">
+      <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="5.5" />
+      <line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${y.toFixed(1)}" y2="${anchorY.toFixed(1)}" />
+      <text x="${x.toFixed(1)}" y="${labelY.toFixed(1)}" text-anchor="middle">
+        <tspan x="${x.toFixed(1)}">${label}</tspan>
+        ${priceLabel ? `<tspan x="${x.toFixed(1)}" dy="11">${escapeHtml(priceLabel)}</tspan>` : ""}
+      </text>
+    </g>
+  `;
+}
+
+function tradingPointIndex(points) {
+  const index = new Map();
+  points.forEach((point, pointIndex) => {
+    index.set(String(point.time || ""), pointIndex);
+  });
+  return index;
+}
+
+function tradingY(value, minValue, maxValue, height, padTop, padBottom) {
+  const plotHeight = height - padTop - padBottom;
+  const span = maxValue - minValue || 1;
+  return padTop + (1 - (value - minValue) / span) * plotHeight;
+}
+
+function tradingGrid(width, height, padTop, padBottom, padX) {
+  const plotBottom = height - padBottom;
+  return [0.25, 0.5, 0.75]
+    .map((ratio) => {
+      const y = padTop + ratio * (plotBottom - padTop);
+      return `<line class="trading-grid-line" x1="${padX}" x2="${width - padX}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}" />`;
+    })
+    .join("");
+}
+
+function renderTradingEventLog(events) {
+  renderTradingEventRows(events, els.tradingEventLog, els.tradingEventCount, "暂无交易操作", 30);
+}
+
+function renderTradingEventRows(events, target, countTarget, emptyText, limit = 30) {
+  const compacted = compactTradingEvents(events);
+  const rows = compacted.slice(-limit).reverse();
+  countTarget.textContent = String(compacted.length);
+  if (!rows.length) {
+    target.innerHTML = `<div class="empty">${escapeHtml(emptyText)}</div>`;
+    return;
+  }
+  target.innerHTML = rows
+    .map((event) => {
+      const display = event._display || tradingEventDisplay(event);
+      const countLabel = Number(event._count || 0) > 1 ? ` ×${Number(event._count)}` : "";
+      return `
+        <div class="trading-event-row" data-severity="${escapeAttribute(event.severity || "info")}">
+          <div class="trading-event-main">
+            <strong>${escapeHtml(display.title)}${escapeHtml(countLabel)}</strong>
+            <span>${escapeHtml(display.detail)}</span>
+          </div>
+          <small>${escapeHtml(shortTimeOnly(event.time))} · ${escapeHtml(display.typeLabel)}</small>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function compactTradingEvents(events) {
+  const operationTypes = new Set(["started", "stopped", "signal", "open", "close", "data_warning", "error"]);
+  const rows = [];
+  for (const event of events || []) {
+    if (!operationTypes.has(event.type) || isInternalTradingNoise(event)) continue;
+    const display = tradingEventDisplay(event);
+    const key = `${event.type || ""}|${event.severity || ""}|${display.title}|${display.detail}`;
+    const previous = rows[rows.length - 1];
+    if (previous && previous._compactKey === key) {
+      previous._count = Number(previous._count || 1) + 1;
+      previous.time = event.time || previous.time;
+      continue;
+    }
+    rows.push({...event, _compactKey: key, _display: display, _count: 1});
+  }
+  return rows;
+}
+
+function tradingEventDisplay(event) {
+  const type = String(event.type || "event").toLowerCase();
+  const ticker = event.ticker || "";
+  const price = Number(event.price);
+  const quoteSide = String(event.quote_side || "").toUpperCase();
+  const quoteText = quoteSide ? `${quoteSide} 价` : "成交价";
+  const typeLabels = {
+    started: "启动",
+    stopped: "停止",
+    signal: "信号",
+    open: "开仓",
+    close: "平仓",
+    data_warning: "数据",
+    error: "错误",
+  };
+  if (type === "started") {
+    return {title: "模拟已启动", detail: "开始轮询行情与 OpenD RSI。", typeLabel: typeLabels.started};
+  }
+  if (type === "stopped") {
+    return {title: "模拟已停止", detail: "已暂停轮询，不会产生新的交易动作。", typeLabel: typeLabels.stopped};
+  }
+  if (type === "open") {
+    return {
+      title: `${tradingEventLegText(event.leg)}开仓${ticker ? ` · ${ticker}` : ""}`,
+      detail: `${quoteText} ${Number.isFinite(price) ? priceText(price) : "-"}，数量 ${tradingQtyText(event.qty)}。${tradingReasonText(event.reason)}`,
+      typeLabel: typeLabels.open,
+    };
+  }
+  if (type === "close") {
+    return {
+      title: `${tradingEventLegText(event.leg)}平仓${ticker ? ` · ${ticker}` : ""}`,
+      detail: `${quoteText} ${Number.isFinite(price) ? priceText(price) : "-"}，盈亏 ${moneyText(event.pnl)}，回报 ${pctText(event.return_pct)}。${tradingReasonText(event.reason)}`,
+      typeLabel: typeLabels.close,
+    };
+  }
+  if (type === "signal") {
+    return {title: "策略信号", detail: tradingEventMessageText(event.message), typeLabel: typeLabels.signal};
+  }
+  if (type === "data_warning") {
+    return {title: "数据等待", detail: tradingEventMessageText(event.message), typeLabel: typeLabels.data_warning};
+  }
+  if (type === "error") {
+    return {title: "运行错误", detail: tradingEventMessageText(event.message), typeLabel: typeLabels.error};
+  }
+  return {title: typeLabels[type] || "运行记录", detail: tradingEventMessageText(event.message || type), typeLabel: typeLabels[type] || "事件"};
+}
+
+function tradingEventMessageText(message) {
+  const text = String(message || "").trim();
+  const lower = text.toLowerCase();
+  if (!text) return "暂无详情。";
+  if (lower.includes("maximum 10 times per 30 seconds")) {
+    return "请求过快：Futu 限制 30 秒内最多 10 次，下一轮会继续尝试。";
+  }
+  if (lower.includes("opend stockscreen rsi did not return") && lower.includes("watchlist")) {
+    const ticker = text.match(/return\s+([A-Z0-9._-]+)/)?.[1];
+    return `${ticker || "该标的"} 未从 Futu 自选列表返回 RSI，已改用全市场扫描。`;
+  }
+  if (lower.includes("opend stockscreen rsi did not return")) {
+    const ticker = text.match(/return\s+([A-Z0-9._-]+)/)?.[1];
+    return `${ticker || "该标的"} 暂未在 OpenD StockScreen 结果中返回 RSI。`;
+  }
+  if (lower.includes("futu opend connection unavailable") || lower.includes("network interruption") || lower.includes("disconn")) {
+    return "Futu OpenD 连接暂不可用，系统会在下一轮继续尝试。";
+  }
+  if (lower.includes("packeterr.timeout")) {
+    return "Futu OpenD 请求超时，系统会在下一轮继续尝试。";
+  }
+  if (lower.includes("rotated to long")) {
+    return text.replace(": rotated to long", "：切换到多头仓位");
+  }
+  if (lower.includes("rotated to bear")) {
+    return text.replace(": rotated to bear", "：切换到反向仓位");
+  }
+  if (lower.startsWith("profit take")) {
+    return text.replace("Profit take", "触发止盈").replace(" >= ", "，达到止盈阈值 ");
+  }
+  return text.replace(/^Futu fallback:\\s*/i, "Futu 备用数据：");
+}
+
+function tradingEventLegText(leg) {
+  return String(leg || "").toLowerCase() === "short" ? "反向" : "多头";
+}
+
+function tradingReasonText(reason) {
+  const clean = String(reason || "").toLowerCase();
+  if (clean === "rsi_extreme_oversold") return "RSI 进入超卖区。";
+  if (clean === "rsi_extreme_overbought") return "RSI 进入超买区。";
+  if (clean === "rsi_extreme_profit_take") return "达到止盈条件。";
+  return clean ? clean.replaceAll("_", " ") : "";
+}
+
+function tradingQtyText(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  if (number >= 100) return number.toFixed(1);
+  return number.toFixed(3);
+}
+
+function isInternalTradingNoise(event) {
+  const message = String(event.message || "");
+  const legacyBorrowedShortModel =
+    message.includes("SELL_SHORT") ||
+    message.includes("BUY_TO_COVER") ||
+    message.includes("opened pair") ||
+    message.includes("closed pair");
+  return (event.type === "error" && message.includes("trading_simulator.tmp")) || legacyBorrowedShortModel;
+}
+
+function renderTradingTradeLog(trades) {
+  renderTradingTradeRows(trades, els.tradingTradeLog, els.tradingTradeCount);
+}
+
+function renderTradingTradeRows(trades, target, countTarget, emptyText = "No PnL records", limit = 80) {
+  const safeTrades = Array.isArray(trades) ? trades : [];
+  const rows = safeTrades.slice(-limit).reverse();
+  countTarget.textContent = String(safeTrades.length);
+  if (!rows.length) {
+    target.innerHTML = `<div class="empty">${escapeHtml(emptyText)}</div>`;
+    return;
+  }
+  target.innerHTML = rows
+    .map((trade) => {
+      const pnl = Number(trade.pnl || 0);
+      const path = tradeExecutionPathText(trade);
+      return `
+        <div class="trading-trade-row" data-pnl="${escapeAttribute(pnlDirection(pnl))}">
+          <div>
+            <strong>${escapeHtml(tradingLegLabel(trade.leg))} ${escapeHtml(trade.ticker || "-")}</strong>
+            <span>${escapeHtml(path)} · ${escapeHtml(pctText(trade.return_pct || 0))}</span>
+          </div>
+          <b>${escapeHtml(moneyText(pnl))}</b>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function tradeExecutionPathText(trade) {
+  const entrySide = String(trade.entry_quote_side || "").toUpperCase();
+  const exitSide = String(trade.exit_quote_side || "").toUpperCase();
+  const entry = `${priceText(trade.entry_price)}${entrySide ? ` ${entrySide}` : ""}`;
+  const exit = `${priceText(trade.exit_price)}${exitSide ? ` ${exitSide}` : ""}`;
+  if (String(trade.leg || "").toLowerCase() === "short") {
+    return `Buy Bear ${entry} -> Sell Bear ${exit}`;
+  }
+  return `Buy Long ${entry} -> Sell Long ${exit}`;
+}
+
+function tradingLegLabel(leg) {
+  return String(leg || "").toLowerCase() === "short" ? "BEAR" : "LONG";
+}
+
+async function createTradingInstance() {
+  const longTicker = cleanTickerInput(els.tradingLongTickerInput.value);
+  const shortTicker = cleanTickerInput(els.tradingShortTickerInput.value);
+  const signalTicker = cleanTickerInput(els.tradingSignalTickerInput.value || longTicker);
+  if (!longTicker || !shortTicker) {
+    alert("Long and Bear tickers are required.");
+    return;
+  }
+  els.createTradingInstanceButton.disabled = true;
+  try {
+    const data = await api("/api/trading/simulate/instances", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        name: els.tradingNameInput.value.trim(),
+        pair_id: els.tradingPairSelect.value || "custom",
+        signal_ticker: signalTicker,
+        long_ticker: longTicker,
+        short_ticker: shortTicker,
+        notional_per_leg: Number(els.tradingNotionalInput.value || 1000),
+        poll_seconds: Number(els.tradingPollSecondsInput.value || 5),
+      }),
+    });
+    activeTradingInstanceId = data.instance?.id || activeTradingInstanceId;
+    els.tradingNameInput.value = "";
+    await refreshTradingInstances();
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    els.createTradingInstanceButton.disabled = false;
+  }
+}
+
+async function startTradingInstance() {
+  if (!activeTradingInstanceId) return;
+  els.startTradingInstanceButton.disabled = true;
+  try {
+    await api(`/api/trading/simulate/instances/${encodeURIComponent(activeTradingInstanceId)}/start`, {method: "POST"});
+    await refreshTradingInstances();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function stopTradingInstance() {
+  if (!activeTradingInstanceId) return;
+  els.stopTradingInstanceButton.disabled = true;
+  try {
+    await api(`/api/trading/simulate/instances/${encodeURIComponent(activeTradingInstanceId)}/stop`, {method: "POST"});
+    await refreshTradingInstances();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function deleteTradingInstance() {
+  if (!activeTradingInstanceId) return;
+  if (!window.confirm("Delete this simulation instance?")) return;
+  const deletedId = activeTradingInstanceId;
+  els.deleteTradingInstanceButton.disabled = true;
+  try {
+    await api(`/api/trading/simulate/instances/${encodeURIComponent(deletedId)}`, {method: "DELETE"});
+    activeTradingInstanceId = null;
+    await refreshTradingInstances();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function runTradingBacktest() {
+  if (!activeTradingInstanceId) return;
+  const start = els.tradingBacktestStart.value;
+  const end = els.tradingBacktestEnd.value;
+  if (!start || !end) {
+    renderTradingBacktestEmpty("Start and end are required");
+    return;
+  }
+  const requestId = ++tradingBacktestRequest;
+  els.runTradingBacktestButton.disabled = true;
+  els.runTradingBacktestButton.textContent = "Running";
+  renderTradingBacktestEmpty("Running daily backtests");
+  try {
+    const data = await api(`/api/trading/simulate/instances/${encodeURIComponent(activeTradingInstanceId)}/backtest`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        start,
+        end,
+        strategy_id: els.tradingDetailStrategySelect.value || latestTradingDetail?.strategy_id || "rsi_extreme",
+        profit_take_percent: Number(els.tradingDetailProfitTakeInput.value || 4),
+      }),
+    });
+    if (requestId !== tradingBacktestRequest) return;
+    tradingBacktestResult = data.backtest || null;
+    renderTradingBacktestResult(tradingBacktestResult);
+    await loadTradingInstanceDetail(activeTradingInstanceId);
+  } catch (error) {
+    if (requestId !== tradingBacktestRequest) return;
+    tradingBacktestResult = null;
+    renderTradingBacktestEmpty(error.message);
+  } finally {
+    if (requestId === tradingBacktestRequest) {
+      els.runTradingBacktestButton.disabled = false;
+      els.runTradingBacktestButton.textContent = "Run Backtest";
+    }
+  }
+}
+
+function renderTradingBacktestResult(result) {
+  if (!result) {
+    renderTradingBacktestEmpty();
+    return;
+  }
+  const dailyResults = tradingBacktestDailyResults(result);
+  if (!dailyResults.length) {
+    renderTradingBacktestEmpty("No daily backtest results");
+    return;
+  }
+  const selectedExists = dailyResults.some((item) => tradingBacktestDayKey(item) === tradingBacktestSelectedDate);
+  if (!selectedExists) {
+    tradingBacktestSelectedDate = tradingBacktestDayKey(dailyResults[dailyResults.length - 1]);
+  }
+  renderTradingBacktestPeriodSummary(result, dailyResults);
+  renderTradingBacktestDailyList(dailyResults);
+  const selected = dailyResults.find((item) => tradingBacktestDayKey(item) === tradingBacktestSelectedDate) || dailyResults[0];
+  renderTradingBacktestDayDetail(selected);
+}
+
+function tradingBacktestDailyResults(result) {
+  const rows = Array.isArray(result?.daily_results) && result.daily_results.length
+    ? result.daily_results
+    : result
+      ? [result]
+      : [];
+  return rows
+    .slice()
+    .sort((left, right) => tradingBacktestDayKey(left).localeCompare(tradingBacktestDayKey(right)));
+}
+
+function tradingBacktestDayKey(result) {
+  return String(result?.date || result?.start || "").slice(0, 10);
+}
+
+function renderTradingBacktestPeriodSummary(result, dailyResults) {
+  const period = result.period_metrics || {};
+  const totalPnl = Number(period.total_pnl ?? result.final_pnl ?? result.metrics?.total_pnl ?? 0);
+  const wins = Number(period.winning_days ?? dailyResults.filter((item) => item.outcome === "win").length);
+  const losses = Number(period.losing_days ?? dailyResults.filter((item) => item.outcome === "loss").length);
+  const flats = Number(period.flat_days ?? dailyResults.filter((item) => item.outcome === "flat").length);
+  const decided = wins + losses;
+  const winRate = Number(period.win_rate ?? (decided ? wins / decided : 0));
+  const averagePnl = Number(period.average_daily_pnl ?? (dailyResults.length ? totalPnl / dailyResults.length : 0));
+  const bestDay = period.best_day || dailyResults.reduce(
+    (best, item) => !best || Number(item.final_pnl || 0) > Number(best.final_pnl || 0) ? item : best,
+    null
+  );
+  const worstDay = period.worst_day || dailyResults.reduce(
+    (worst, item) => !worst || Number(item.final_pnl || 0) < Number(worst.final_pnl || 0) ? item : worst,
+    null
+  );
+  const bestDate = String(bestDay?.date || bestDay?.start || "").slice(5, 10);
+  const worstDate = String(worstDay?.date || worstDay?.start || "").slice(5, 10);
+  const bestPnl = Number(bestDay?.pnl ?? bestDay?.final_pnl ?? 0);
+  const worstPnl = Number(worstDay?.pnl ?? worstDay?.final_pnl ?? 0);
+  const noDataCount = Number(period.no_data_day_count ?? result.no_data_dates?.length ?? 0);
+  const primaryValues = [
+    ["Total PnL", moneyText(totalPnl), `${dailyResults.length} trading days`, pnlDirection(totalPnl)],
+    ["Total Win Rate", `${(winRate * 100).toFixed(1)}%`, `${wins} wins / ${losses} losses · flats excluded`, winRate >= 0.5 ? "up" : "down"],
+    ["Daily Record", `${wins}-${losses}-${flats}`, "Win · Loss · Flat", ""],
+    ["Avg Day", moneyText(averagePnl), noDataCount ? `${noDataCount} weekdays without data` : "All weekdays covered", pnlDirection(averagePnl)],
+  ];
+  const detailValues = [
+    ["Best Day", moneyText(bestPnl), bestDate || "-", pnlDirection(bestPnl)],
+    ["Worst Day", moneyText(worstPnl), worstDate || "-", pnlDirection(worstPnl)],
+    ["Data Coverage", noDataCount ? `${noDataCount} missing` : "Complete", `${dailyResults.length} trading days`, noDataCount ? "down" : "up"],
+    ["Range", backtestRangeText(result), result.source_label || result.source || "-", ""],
+  ];
+  els.tradingBacktestPeriodSummary.innerHTML = primaryValues
+    .map(
+      ([label, value, help, direction]) => `
+        <div class="trading-metric" data-pnl="${escapeAttribute(direction || "")}">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+          <small>${escapeHtml(help || "")}</small>
+        </div>
+      `
+    )
+    .join("");
+  if (els.tradingBacktestPeriodDetails) {
+    els.tradingBacktestPeriodDetails.innerHTML = detailValues
+      .map(
+        ([label, value, help, direction]) => `
+          <div class="trading-tip-metric" data-pnl="${escapeAttribute(direction || "")}">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value || "-")}</strong>
+            <small>${escapeHtml(help || "")}</small>
+          </div>
+        `
+      )
+      .join("");
+  }
+  if (els.tradingBacktestMoreButton) els.tradingBacktestMoreButton.hidden = false;
+}
+
+function renderTradingBacktestDailyList(dailyResults) {
+  els.tradingBacktestDailySection.hidden = false;
+  els.tradingBacktestDailyCount.textContent = `${dailyResults.length} ${dailyResults.length === 1 ? "day" : "days"}`;
+  els.tradingBacktestDailyList.innerHTML = dailyResults
+    .slice()
+    .reverse()
+    .map((day) => {
+      const key = tradingBacktestDayKey(day);
+      const pnl = Number(day.final_pnl || day.metrics?.total_pnl || 0);
+      const outcome = day.outcome || (pnl > 0 ? "win" : pnl < 0 ? "loss" : "flat");
+      const metrics = day.metrics || {};
+      return `
+        <button
+          class="trading-backtest-day-button${key === tradingBacktestSelectedDate ? " active" : ""}"
+          type="button"
+          data-date="${escapeAttribute(key)}"
+          data-outcome="${escapeAttribute(outcome)}"
+        >
+          <span>${escapeHtml(shortBacktestDate(key))}</span>
+          <strong>${escapeHtml(moneyText(pnl))}</strong>
+          <small>${escapeHtml(String(outcome).toUpperCase())} · ${Number(metrics.trade_count || 0)} trades</small>
+        </button>
+      `;
+    })
+    .join("");
+}
+
+function renderTradingBacktestDayDetail(result) {
+  if (!result) return;
+  els.tradingBacktestDayDetail.hidden = false;
+  const dayKey = tradingBacktestDayKey(result);
+  const finalPnl = Number(result.final_pnl || result.metrics?.total_pnl || 0);
+  const outcome = result.outcome || (finalPnl > 0 ? "win" : finalPnl < 0 ? "loss" : "flat");
+  els.tradingBacktestSelectedDate.textContent = dayKey || "-";
+  els.tradingBacktestSelectedOutcome.textContent = `${String(outcome).toUpperCase()} · ${moneyText(finalPnl)}`;
+  els.tradingBacktestSelectedOutcome.dataset.outcome = outcome;
+  const metrics = result.metrics || {};
+  const realized = Number(metrics.realized_pnl || 0);
+  const openPnl = Number(metrics.unrealized_pnl || 0);
+  const trades = Array.isArray(result.trades) ? result.trades : [];
+  const operations = Array.isArray(result.operations) ? result.operations : [];
+  const primaryValues = [
+    ["Final PnL", moneyText(finalPnl), `${moneyText(realized)} realized`, pnlDirection(finalPnl)],
+    ["Closed Trades", String(Number(metrics.trade_count || trades.length || 0)), `Win ${pctText(metrics.win_rate || 0)}`, ""],
+    ["Open PnL", moneyText(openPnl), pctText(metrics.open_return_pct || 0), pnlDirection(openPnl)],
+  ];
+  const factValues = [
+    ["Points", String(Number(result.point_count || 0)), `RSI ready ${Number(result.rsi_ready_count || 0)}`, ""],
+    ["Range", backtestRangeText(result), "Selected session", ""],
+    ["Source", result.source_label || result.source || "-", "Historical market data", ""],
+  ];
+  els.tradingBacktestSummary.innerHTML = primaryValues
+    .map(
+      ([label, value, help, direction]) => `
+        <div class="trading-metric" data-pnl="${escapeAttribute(direction || "")}">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+          <small>${escapeHtml(help || "")}</small>
+        </div>
+      `
+    )
+    .join("");
+  if (els.tradingBacktestDayFacts) {
+    els.tradingBacktestDayFacts.innerHTML = factValues
+      .map(
+        ([label, value, help, direction]) => `
+          <div class="trading-tip-metric" data-pnl="${escapeAttribute(direction || "")}">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value || "-")}</strong>
+            <small>${escapeHtml(help || "")}</small>
+          </div>
+        `
+      )
+      .join("");
+  }
+  renderTradingBacktestCharts(result);
+  renderTradingEventRows(operations, els.tradingBacktestOperations, els.tradingBacktestOperationCount, "No backtest operations");
+  renderTradingTradeRows(trades, els.tradingBacktestTrades, els.tradingBacktestTradeCount);
+}
+
+function shortBacktestDate(value) {
+  const date = parseTradingDate(`${String(value || "").slice(0, 10)}T12:00:00`);
+  if (!date) return String(value || "-");
+  return new Intl.DateTimeFormat("en-US", {
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+  }).format(date);
+}
+
+function selectTradingBacktestDay(event) {
+  const button = event.target.closest(".trading-backtest-day-button");
+  if (!button || !tradingBacktestResult) return;
+  const date = button.dataset.date || "";
+  const dailyResults = tradingBacktestDailyResults(tradingBacktestResult);
+  const selected = dailyResults.find((item) => tradingBacktestDayKey(item) === date);
+  if (!selected) return;
+  tradingBacktestSelectedDate = date;
+  if (els.tradingBacktestAudit) els.tradingBacktestAudit.open = false;
+  closeTradingPopover(document.querySelector("#tradingBacktestDayTip"));
+  renderTradingBacktestDailyList(dailyResults);
+  renderTradingBacktestDayDetail(selected);
+  window.setTimeout(scheduleTradingChartResize, 40);
+}
+
+function renderTradingBacktestCharts(result) {
+  const points = Array.isArray(result?.price_points) ? result.price_points : [];
+  const markers = Array.isArray(result?.markers) ? result.markers : [];
+  els.tradingBacktestPriceMeta.textContent = `${result.long_ticker || "Long"}/${result.short_ticker || "Bear"} · ${Number(points.length)} points · ${Number(markers.length)} marks`;
+  els.tradingBacktestRsiMeta.textContent = `${result.source_label || "Backtest RSI"} · ${Number(result.rsi_ready_count || 0)} ready`;
+  renderTradingPriceChart(points, result, {
+    target: els.tradingBacktestPriceChart,
+    markers,
+  });
+  renderTradingRsiChart(points, {
+    target: els.tradingBacktestRsiChart,
+    markers,
+  });
+}
+
+function backtestRangeText(result) {
+  const start = shortDateTime(result?.start);
+  const end = shortDateTime(result?.end);
+  if (!start || !end) return "-";
+  return `${start} -> ${end}`;
+}
+
+function strategyName(strategyId) {
+  const strategy = tradingStrategies.find((item) => item.id === strategyId);
+  return strategy?.label || String(strategyId || "-").replaceAll("_", " ");
+}
+
+function tradingStatusText(status) {
+  const clean = String(status || "idle").toLowerCase();
+  if (clean === "running") return "Running";
+  if (clean === "idle") return "Idle";
+  if (clean === "failed") return "Failed";
+  return clean.toUpperCase();
+}
+
+function cleanTickerInput(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9._-]/g, "")
+    .split(".")
+    .pop();
+}
+
+function pnlDirection(value) {
+  const number = Number(value || 0);
+  if (number > 0) return "up";
+  if (number < 0) return "down";
+  return "flat";
 }
 
 function setCandidateSearchMode(isSearching) {
@@ -2150,10 +3987,29 @@ function priceBareText(value) {
   return number >= 100 ? number.toFixed(2) : number.toFixed(3);
 }
 
+function moneyText(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  const prefix = number >= 0 ? "+" : "-";
+  return `${prefix}$${Math.abs(number).toFixed(2)}`;
+}
+
+function dollarText(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  return `$${Math.abs(number).toFixed(2)}`;
+}
+
 function pctText(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "-";
   return `${number >= 0 ? "+" : ""}${(number * 100).toFixed(2)}%`;
+}
+
+function pctThresholdText(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  return `${(number * 100).toFixed(2)}%`;
 }
 
 function volumeText(value) {
@@ -2169,6 +4025,57 @@ function shortTimeOnly(value) {
   if (text.includes(" ")) return text.split(" ").pop().slice(0, 5);
   if (text.includes("T")) return text.split("T").pop().slice(0, 5);
   return text.slice(0, 5);
+}
+
+function parseTradingDate(value) {
+  if (!value) return null;
+  const date = new Date(String(value).replace(" ", "T"));
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function currentNewYorkDate() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return new Date(`${values.year}-${values.month}-${values.day}T12:00:00`);
+}
+
+function regularUsSessionRange(referenceDate) {
+  const reference = referenceDate instanceof Date && Number.isFinite(referenceDate.getTime()) ? referenceDate : currentNewYorkDate();
+  const start = new Date(reference);
+  start.setHours(9, 30, 0, 0);
+  const end = new Date(reference);
+  end.setHours(16, 0, 0, 0);
+  return {start, end};
+}
+
+function datetimeLocalValue(date) {
+  const valid = date instanceof Date && Number.isFinite(date.getTime()) ? date : new Date();
+  const pad = (number) => String(number).padStart(2, "0");
+  return [
+    valid.getFullYear(),
+    "-",
+    pad(valid.getMonth() + 1),
+    "-",
+    pad(valid.getDate()),
+    "T",
+    pad(valid.getHours()),
+    ":",
+    pad(valid.getMinutes()),
+  ].join("");
+}
+
+function shortDateTime(value) {
+  const text = String(value || "");
+  if (!text) return "";
+  const datePart = text.includes("T") ? text.split("T")[0] : text.split(" ")[0];
+  const timePart = shortTimeOnly(text);
+  if (!datePart || !timePart) return text.slice(0, 16);
+  return `${datePart.slice(5)} ${timePart}`;
 }
 
 function setWatchState(watched) {
@@ -2392,6 +4299,8 @@ els.navDetailsButton.addEventListener("click", async () => {
 els.navOpeningRadarButton.addEventListener("click", () => openOpeningRadarView("today"));
 els.navOpeningTodayButton.addEventListener("click", () => openOpeningRadarView("today"));
 els.navOpeningTrendButton.addEventListener("click", () => openOpeningRadarView("trend"));
+els.navTradingButton.addEventListener("click", () => showWorkspaceView("trading-simulate"));
+els.navTradingSimulateButton.addEventListener("click", () => showWorkspaceView("trading-simulate"));
 els.navDataSourcesButton.addEventListener("click", () => showWorkspaceView("datasources"));
 els.openRunsButton.addEventListener("click", openQueueDrawer);
 els.closeScreeningDialog.addEventListener("click", closeScreeningDialog);
@@ -2406,6 +4315,25 @@ els.openingTrendIndex.addEventListener("change", () => loadOpeningLongTermTrend(
 els.openingTrendTransform.addEventListener("change", () => loadOpeningLongTermTrend({force: true}));
 els.refreshOpeningTrendButton.addEventListener("click", () => loadOpeningLongTermTrend({force: true}));
 els.analyzeOpeningTrendButton.addEventListener("click", analyzeOpeningTrend);
+els.toggleTradingFocusButton.addEventListener("click", toggleTradingFocusMode);
+els.refreshTradingButton.addEventListener("click", () => loadTradingSimulate({force: true}));
+els.tradingPairSelect.addEventListener("change", applyTradingPairSelection);
+els.tradingSignalTickerInput.addEventListener("input", setTradingPairCustom);
+els.tradingLongTickerInput.addEventListener("input", setTradingPairCustom);
+els.tradingShortTickerInput.addEventListener("input", setTradingPairCustom);
+els.createTradingInstanceButton.addEventListener("click", createTradingInstance);
+els.tradingDetailStrategySelect.addEventListener("change", async () => {
+  previewTradingStrategySelection();
+  await updateTradingStrategySelection();
+});
+els.tradingDetailProfitTakeInput.addEventListener("change", updateTradingStrategySelection);
+els.startTradingInstanceButton.addEventListener("click", startTradingInstance);
+els.stopTradingInstanceButton.addEventListener("click", stopTradingInstance);
+els.deleteTradingInstanceButton.addEventListener("click", deleteTradingInstance);
+els.tradingLiveTab.addEventListener("click", () => setTradingDetailView("live"));
+els.tradingBacktestTab.addEventListener("click", () => setTradingDetailView("backtest"));
+els.runTradingBacktestButton.addEventListener("click", runTradingBacktest);
+els.tradingBacktestDailyList.addEventListener("click", selectTradingBacktestDay);
 els.detailWatchButton.addEventListener("click", toggleWatch);
 els.rerunTickerButton.addEventListener("click", rerunTicker);
 els.refreshTimetableButton.addEventListener("click", refreshTimetableSources);
@@ -2420,6 +4348,10 @@ els.latestRun.addEventListener("click", openQueueDrawer);
 els.queueClose.addEventListener("click", closeQueueDrawer);
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
+    if (document.body.classList.contains("trading-focus-mode")) {
+      setTradingFocusMode(false);
+      return;
+    }
     closeQueueDrawer();
     if (els.screeningDialog.open) closeScreeningDialog();
   }
@@ -2444,6 +4376,7 @@ els.dimensionFilter.addEventListener("change", () => selectedTicker && loadTicke
 els.shortTermWindow.addEventListener("change", loadShortTermSnapshot);
 window.addEventListener("pagehide", releaseShortTermTrackingOnPageExit);
 window.addEventListener("beforeunload", releaseShortTermTrackingOnPageExit);
+window.addEventListener("resize", scheduleTradingChartResize);
 
 hydrateTickerInput();
 showWorkspaceView("research");

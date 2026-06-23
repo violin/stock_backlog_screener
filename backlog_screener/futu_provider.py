@@ -4,7 +4,7 @@ import math
 import os
 import time
 from contextlib import AbstractContextManager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable
 
@@ -181,15 +181,16 @@ class FutuProvider(AbstractContextManager["FutuProvider"]):
         rows = [_clean_record(record) for record in data.to_dict(orient="records")]
         return rows[-max(1, int(days)) :]
 
-    def subscribe_minute_kline(self, ticker: str, *, session: str = "ALL") -> str:
+    def subscribe_kline(self, ticker: str, *, subtype_name: str = "K_1M", session: str = "ALL") -> str:
         from futu import Session, SubType
 
         code = futu_code(ticker, self.market)
         session_value = getattr(Session, session.upper(), Session.ALL)
+        subtype = getattr(SubType, subtype_name)
         try:
             ret, data = self.quote_ctx.subscribe(
                 [code],
-                [SubType.K_1M],
+                [subtype],
                 is_first_push=True,
                 subscribe_push=True,
                 session=session_value,
@@ -197,7 +198,7 @@ class FutuProvider(AbstractContextManager["FutuProvider"]):
         except TypeError:
             ret, data = self.quote_ctx.subscribe(
                 [code],
-                [SubType.K_1M],
+                [subtype],
                 is_first_push=True,
                 subscribe_push=True,
             )
@@ -205,15 +206,21 @@ class FutuProvider(AbstractContextManager["FutuProvider"]):
             raise RuntimeError(str(data))
         return code
 
-    def unsubscribe_minute_kline(self, ticker: str) -> None:
+    def subscribe_minute_kline(self, ticker: str, *, session: str = "ALL") -> str:
+        return self.subscribe_kline(ticker, subtype_name="K_1M", session=session)
+
+    def unsubscribe_kline(self, ticker: str, *, subtype_name: str = "K_1M") -> None:
         from futu import SubType
 
         code = futu_code(ticker, self.market)
-        ret, data = self.quote_ctx.unsubscribe([code], [SubType.K_1M])
+        ret, data = self.quote_ctx.unsubscribe([code], [getattr(SubType, subtype_name)])
         if ret != self._ret_ok:
             raise RuntimeError(str(data))
 
-    def current_minute_kline(self, ticker: str, *, num: int = 160) -> tuple[str, list[dict]]:
+    def unsubscribe_minute_kline(self, ticker: str) -> None:
+        self.unsubscribe_kline(ticker, subtype_name="K_1M")
+
+    def current_kline(self, ticker: str, *, num: int = 160, subtype_name: str = "K_1M") -> tuple[str, list[dict]]:
         from futu import AuType, SubType
 
         code = futu_code(ticker, self.market)
@@ -221,7 +228,7 @@ class FutuProvider(AbstractContextManager["FutuProvider"]):
         ret, data = self.quote_ctx.get_cur_kline(
             code,
             count,
-            SubType.K_1M,
+            getattr(SubType, subtype_name),
             AuType.QFQ,
         )
         if ret != self._ret_ok:
@@ -229,6 +236,103 @@ class FutuProvider(AbstractContextManager["FutuProvider"]):
         if data is None or data.empty:
             return code, []
         return code, [_clean_record(record) for record in data.to_dict(orient="records")]
+
+    def current_minute_kline(self, ticker: str, *, num: int = 160) -> tuple[str, list[dict]]:
+        return self.current_kline(ticker, num=num, subtype_name="K_1M")
+
+    def history_intraday_kline(
+        self,
+        ticker: str,
+        *,
+        start: datetime,
+        end: datetime,
+        subtype_name: str = "K_1M",
+        max_pages: int = 20,
+    ) -> tuple[str, list[dict]]:
+        from futu import AuType, KLType
+
+        code = futu_code(ticker, self.market)
+        rows: list[dict] = []
+        page_req_key = None
+        max_pages = max(1, int(max_pages))
+        for _ in range(max_pages):
+            ret, data, page_req_key = self.quote_ctx.request_history_kline(
+                code,
+                start=start.date().isoformat(),
+                end=end.date().isoformat(),
+                ktype=getattr(KLType, subtype_name),
+                autype=AuType.QFQ,
+                max_count=1000,
+                page_req_key=page_req_key,
+            )
+            if ret != self._ret_ok:
+                raise RuntimeError(str(data))
+            if data is not None and not data.empty:
+                rows.extend(_clean_record(record) for record in data.to_dict(orient="records"))
+            if not page_req_key:
+                break
+            time.sleep(0.15)
+        return code, rows
+
+    def stock_screen_rsi(
+        self,
+        ticker: str,
+        *,
+        interval: str = "3m",
+        rsi_period: int = 6,
+        watchlist_only: bool = True,
+        max_pages: int = 3,
+        page_size: int = 200,
+    ) -> dict:
+        from futu import BasicProperty, Indicator, Period, ScrMarket, SimpleField, StockScreenRequest
+
+        target = _ticker_from_code(futu_code(ticker, self.market))
+        period_enum = _stock_screen_period(interval)
+        market_enum = getattr(ScrMarket, self.market.upper(), ScrMarket.US)
+        page_size = max(1, min(200, int(page_size)))
+        max_pages = max(1, int(max_pages))
+
+        for page in range(max_pages):
+            req = StockScreenRequest()
+            req.page_from = page * page_size
+            req.page_count = page_size
+            req.add_simple_field(field=SimpleField.MARKET, values=[market_enum])
+            if watchlist_only:
+                req.add_simple_field(field=SimpleField.USE_WATCHLIST, values=[1])
+            req.add_retrieve_basic(name=BasicProperty.CODE)
+            req.add_retrieve_basic(name=BasicProperty.NAME)
+            req.add_retrieve_indicator(
+                name=Indicator.RSI,
+                period=period_enum,
+                indicator_params=[int(rsi_period)],
+            )
+            ret, data = self.quote_ctx.get_stock_screen(req)
+            if ret != self._ret_ok:
+                raise RuntimeError(str(data))
+            last_page, _all_count, items = data
+            for item in items:
+                parsed = _stock_screen_item_results(item)
+                code = parsed.get("code")
+                if _ticker_from_code(code) != target:
+                    continue
+                rsi = _stock_screen_numeric_value(parsed.get("rsi"))
+                if rsi is None:
+                    raise RuntimeError(f"OpenD StockScreen returned {target}, but RSI is missing.")
+                return {
+                    "ticker": target,
+                    "code": code,
+                    "rsi": rsi,
+                    "label": "OpenD RSI1",
+                    "period": int(rsi_period),
+                    "interval": interval,
+                    "source": "opend_stock_screen",
+                    "source_label": f"OpenD RSI1 {interval} p{int(rsi_period)}",
+                    "time": datetime.now().isoformat(timespec="seconds"),
+                }
+            if last_page:
+                break
+        scope = "watchlist" if watchlist_only else f"first {max_pages * page_size} market rows"
+        raise RuntimeError(f"OpenD StockScreen RSI did not return {target} from {scope}.")
 
     def price_trend(self, ticker: str, *, max_points: int = 420) -> dict:
         from futu import AuType, KLType
@@ -783,6 +887,57 @@ def _latest_kline_date(rows: list[dict]) -> str | None:
         return None
     value = rows[-1].get("time_key")
     return str(value)[:10] if value else None
+
+
+def _stock_screen_period(interval: str):
+    from futu import Period
+
+    normalized = str(interval or "").strip().lower().replace("_", "")
+    mapping = {
+        "1m": Period.MINUTE_1,
+        "3m": Period.MINUTE_3,
+        "5m": Period.MINUTE_5,
+        "15m": Period.MINUTE_15,
+        "30m": Period.MINUTE_30,
+        "1h": Period.HOUR_1,
+        "60m": Period.HOUR_1,
+        "day": Period.DAY,
+        "1d": Period.DAY,
+        "week": Period.WEEK,
+        "month": Period.MONTH,
+    }
+    return mapping.get(normalized, Period.MINUTE_3)
+
+
+def _stock_screen_item_results(item: dict) -> dict:
+    result = {"code": None, "name": None, "rsi": None}
+    for entry in item.get("results") or []:
+        entry_type = entry.get("type")
+        property_name = (entry.get("property") or {}).get("name")
+        if entry_type == "basic":
+            if property_name == 1101:
+                result["code"] = entry.get("sval") or entry.get("ival")
+            elif property_name == 1102:
+                result["name"] = entry.get("sval")
+        elif entry_type == "indicator" and property_name in {51, 52}:
+            result["rsi"] = entry
+    return result
+
+
+def _stock_screen_numeric_value(entry: dict | None) -> float | None:
+    if not isinstance(entry, dict):
+        return None
+    for key in ("dval", "ival", "sval"):
+        value = entry.get(key)
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            continue
+        if numeric > 1000:
+            numeric /= 100000.0
+        if 0 <= numeric <= 100:
+            return numeric
+    return None
 
 
 def _pct(value: float) -> str:
